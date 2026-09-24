@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<link rel="stylesheet" href="styles.css">
+<style>
+  html, body { height: 96px; overflow: hidden; }
+  body { background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 12px; display: flex; flex-direction: column; gap: 7px; }
+  .brand { font-weight: 700; color: var(--accent); margin-right: 4px; }
+  #url { flex: 1; min-width: 200px; padding: 5px 10px; }
+  button { padding: 5px 11px; }
+  .nav button { padding: 5px 9px; }
+  #status { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+  #status.error { color: var(--bad); }
+  #status.ok { color: var(--good); }
+  #fit { cursor: pointer; }
+</style>
+</head>
+<body>
+  <div class="row nav">
+    <span class="brand">ApplyEase</span>
+    <button id="back" title="Back">←</button>
+    <button id="forward" title="Forward">→</button>
+    <button id="reload" title="Reload">↻</button>
+    <input id="url" placeholder="Paste a job or application link and press Enter" spellcheck="false">
+    <span id="fit" class="pill" title="Click to re-check">Fit: –</span>
+  </div>
+  <div class="row">
+    <button id="fill" class="primary" title="Type your profile into this form">① Fill form</button>
+    <button id="cv" title="Upload your saved CV into the file field">② Attach CV</button>
+    <button id="answer" title="Write answers for open questions and cover letter boxes">③ Write answers</button>
+    <button id="applied" title="You pressed Submit on the site — log it">④ Mark applied</button>
+    <button id="later" class="ghost" title="Save to tracker without applying">Save for later</button>
+    <span class="spacer"></span>
+    <span id="status">Open the application page, then press Fill form. You always press Submit yourself.</span>
+  </div>
+<script src="toolbar.js"></script>
+</body>
+</html>

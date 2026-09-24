@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Junior Financial Analyst Intern at Acme Capital</title>
+<style>body{font-family:sans-serif;max-width:720px;margin:24px auto;padding:0 16px}label{display:block;margin-top:12px;font-weight:600}input,select,textarea{width:100%;padding:6px;margin-top:4px}</style></head>
+<body>
+<h1>Junior Financial Analyst Intern</h1>
+<p>Acme Capital · Budapest (hybrid) · Paid internship, 300,000 HUF / month. Support our analyst team with Excel models. Fluent English required.</p>
+<form onsubmit="event.preventDefault(); document.title='SUBMITTED'">
+  <label for="fn">First name *</label><input id="fn" name="first_name" required>
+  <label for="ln">Last name *</label><input id="ln" name="last_name" required>
+  <label>Email address * <input type="email" name="email" required></label>
+  <label for="ph">Phone</label><input id="ph" name="phone" type="tel">
+  <div><span>LinkedIn profile</span><input name="urls[LinkedIn]"></div>
+  <label for="co">Country</label><select id="co"><option value="">Select…</option><option value="at">Austria</option><option value="hu">Hungary</option><option value="bd">Bangladesh</option></select>
+  <label for="uni">University</label><input id="uni" aria-label="School / University">
+  <label for="st">Earliest start date</label><input id="st">
+  <label for="hear">How did you hear about us?</label><input id="hear">
+  <label for="cvf">Resume/CV *</label><input id="cvf" type="file" required>
+  <label for="why">Why do you want to work at Acme? *</label><textarea id="why" required></textarea>
+  <label for="cl">Cover letter</label><textarea id="cl"></textarea>
+  <label for="ref">Company name of your last employer</label><input id="ref">
+  <label for="vis">Will you require visa sponsorship? *</label><select id="vis" required><option value="">Select…</option><option>Yes</option><option>No</option></select>
+  <iframe src="/frame.html" style="width:100%;height:120px;border:1px dashed #aaa;margin-top:12px"></iframe>
+  <button type="submit">Submit application</button>
+</form>
+</body></html>

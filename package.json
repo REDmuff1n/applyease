@@ -1,0 +1,67 @@
+{
+  "name": "applyease",
+  "version": "1.0.0",
+  "description": "Fill job applications in seconds: profile autofill, CV upload, fit check, cover letters and a tracker.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/fit.test.js && node test/ai.test.js && electron test/e2e.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "author": {
+    "name": "Sheikh Abrar Aowsaf",
+    "email": "sheikhabrar.aowsaf@gmail.com"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "ApplyEase",
+  "build": {
+    "appId": "com.applyease.app",
+    "productName": "ApplyEase",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "signAndEditExecutable": true,
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office",
+      "syncDesktopName": true
+    },
+    "publish": []
+  },
+  "desktopName": "applyease.desktop",
+  "homepage": "https://github.com/REDmuff1n/applyease"
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:">
+<title>ApplyEase</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="side">
+    <div class="logo"><span class="mark">A</span> ApplyEase</div>
+    <button data-tab="home" class="tab">Home</button>
+    <button data-tab="profile" class="tab">Profile &amp; CV</button>
+    <button data-tab="answers" class="tab">Saved answers</button>
+    <button data-tab="check" class="tab">Check a job</button>
+    <button data-tab="tracker" class="tab">Tracker <span id="trackerCount" class="count"></span></button>
+    <button data-tab="settings" class="tab">Settings</button>
+    <div class="spacer"></div>
+    <p class="side-note small muted">Your data stays on this computer.</p>
+  </nav>
+  <main id="view"></main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
