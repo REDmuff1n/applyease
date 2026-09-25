@@ -108,21 +108,26 @@ BIND.home = (v) => {
 
 const PROFILE_SECTIONS = [
   ['Personal', [
-    ['firstName', 'First name'], ['lastName', 'Last name'], ['email', 'Email for applications'], ['phone', 'Phone (with country code)'],
-    ['address', 'Street address'], ['city', 'City'], ['postcode', 'Postcode'], ['country', 'Country'],
-    ['linkedin', 'LinkedIn URL'], ['website', 'Portfolio / website'], ['pronouns', 'Pronouns (optional)']
+    ['firstName', 'First name'], ['lastName', 'Last name'], ['preferredName', 'Preferred name (optional)'], ['email', 'Email for applications'], ['phone', 'Phone (with country code)'],
+    ['address', 'Street address'], ['city', 'City'], ['region', 'State / province / region'], ['postcode', 'Postcode'], ['country', 'Country'],
+    ['linkedin', 'LinkedIn URL'], ['github', 'GitHub URL (optional)'], ['website', 'Portfolio / website'], ['pronouns', 'Pronouns (optional)']
   ]],
   ['Education', [
     ['university', 'University'], ['degree', 'Degree (e.g. BSc)'], ['major', 'Field of study'], ['gradYear', 'Graduation year'], ['gpa', 'GPA / average (optional)']
   ]],
   ['About you', [
     ['headline', 'One-line headline', 'wide'], ['summary', 'Experience summary (a few lines)', 'wide', 'textarea'],
-    ['skills', 'Skills (comma separated)', 'wide'], ['languages', 'Languages you speak (e.g. English C1, Hungarian A1)', 'wide']
+    ['skills', 'Skills (comma separated)', 'wide'], ['languages', 'Languages you speak (e.g. English C1, Hungarian A1)', 'wide'],
+    ['yearsExperience', 'Years of work experience (e.g. "1")']
   ]],
   ['Standard form answers', [
     ['workAuth', 'Allowed to work in this country? (e.g. "Yes")'], ['needsSponsorship', 'Need visa sponsorship? (e.g. "No")'],
-    ['startDate', 'When can you start?'], ['salary', 'Expected pay'], ['howHeard', 'How did you hear about us?']
-  ]]
+    ['startDate', 'When can you start?'], ['salary', 'Expected pay'], ['howHeard', 'How did you hear about us?'],
+    ['relocate', 'Willing to relocate? (e.g. "No")'], ['over18', 'Are you 18 or older?']
+  ]],
+  ['Voluntary questions (diversity / EEO)', [
+    ['gender', 'Gender'], ['ethnicity', 'Race / ethnicity'], ['veteran', 'Veteran status'], ['disability', 'Disability status']
+  ], 'These are optional on every form. "Prefer not to say" picks the closest decline option on each site.']
 ];
 
 PAGES.profile = () => {
@@ -139,8 +144,10 @@ PAGES.profile = () => {
         <textarea id="cvText" rows="6" placeholder="Paste CV text…"></textarea>
         <div class="row" style="margin-top:8px"><button id="importCv" class="primary">Fill profile from CV</button></div>
       </details>
+      <div style="margin-top:12px"><label for="p_cvText">CV text: used to tailor your CV for each job. Paste the full text of your CV.</label>
+        <textarea id="p_cvText" data-k="cvText" rows="6" placeholder="Paste your whole CV here…">${esc(p.cvText)}</textarea></div>
     </div>
-    ${PROFILE_SECTIONS.map(([title, fields]) => `<div class="card"><h2>${title}</h2><div class="grid">${fields.map(field).join('')}</div></div>`).join('')}
+    ${PROFILE_SECTIONS.map(([title, fields, note]) => `<div class="card"><h2>${title}</h2>${note ? `<p class="small muted">${esc(note)}</p>` : ''}<div class="grid">${fields.map(field).join('')}</div></div>`).join('')}
   </div>`;
 };
 BIND.profile = (v) => {
@@ -207,10 +214,22 @@ PAGES.check = () => {
     ${r ? `<div class="card"><div class="fit"><div class="score ${cls}">${r.fit.score}</div><div style="flex:1">
       <h2>${esc(r.fit.verdict)}</h2>
       <ul class="reasons">${r.fit.good.map((x) => `<li class="g">${esc(x)}</li>`).join('')}${r.fit.warn.map((x) => `<li class="w">${esc(x)}</li>`).join('')}${r.fit.bad.map((x) => `<li class="b">${esc(x)}</li>`).join('')}</ul>
-      <div class="row" style="margin-top:14px">${r.job.url ? '<button id="openApply" class="primary">Open &amp; apply</button>' : ''}<button id="saveLater">Save to tracker</button><button id="makeLetter">${r.letter ? 'Rewrite' : 'Write'} cover letter</button></div>
+      <div class="row" style="margin-top:14px">${r.job.url ? '<button id="openApply" class="primary">Open &amp; apply</button>' : ''}<button id="saveLater">Save to tracker</button><button id="makeLetter">${r.letter ? 'Rewrite' : 'Write'} cover letter</button>
+        <button id="aiScore" ${aiReady() ? '' : 'disabled title="Turn on Claude in Settings"'}>${r.ai ? 'Re-score' : 'AI score'}</button>
+        <button id="tailor" ${aiReady() ? '' : 'disabled title="Turn on Claude in Settings"'}>${r.tailored ? 'Re-tailor' : 'Tailor my CV'}</button></div>
+    </div></div></div>` : ''}
+    ${r?.ai ? `<div class="card"><div class="fit"><div class="score ${r.ai.score >= 7 ? 'good' : r.ai.score >= 5 ? 'warn' : 'bad'}">${r.ai.score}<small>/10</small></div><div style="flex:1">
+      <h2>AI score <span class="pill">Claude</span></h2><p>${esc(r.ai.reasoning)}</p>
+      <ul class="reasons">${r.ai.matches.map((x) => `<li class="g">${esc(x)}</li>`).join('')}${r.ai.gaps.map((x) => `<li class="b">${esc(x)}</li>`).join('')}</ul>
+      ${r.ai.keywords.length ? `<p class="small muted" style="margin-top:8px">Words from the ad to mirror in your CV: ${r.ai.keywords.map(esc).join(', ')}</p>` : ''}
     </div></div></div>` : ''}
     ${r?.letter ? `<div class="card"><div class="row"><h2 style="margin:0">Cover letter</h2><span class="pill">${r.letterSource === 'claude' ? 'Written by Claude' : 'From your template'}</span><span class="spacer"></span><button id="copyLetter">Copy</button></div>
+      ${issuesBox(r.letterIssues)}
       <textarea id="letter" rows="16" style="margin-top:10px">${esc(r.letter)}</textarea></div>` : ''}
+    ${r?.tailored ? `<div class="card"><div class="row"><h2 style="margin:0">Tailored CV</h2><span class="pill">For ${esc(r.job.company || 'this job')}</span><span class="spacer"></span><button id="copyCv">Copy</button><button id="saveCvPdf" class="primary">Save as PDF</button></div>
+      ${issuesBox(r.tailored.issues)}
+      <textarea id="cvOut" rows="20" style="margin-top:10px" readonly>${esc(r.tailored.text)}</textarea>
+      <p class="small muted" style="margin-top:6px">Your real employers, dates and numbers are kept; the AI only reorders and rewords. Read it before you send it.</p></div>` : ''}
     <div class="card"><h2>What you're looking for</h2><p class="small muted">Used to score every job.</p>
       <div class="grid">
         <div class="wide"><label>Target roles / keywords (comma separated)</label><input data-pref="targetRoles" value="${esc(pr.targetRoles)}"></div>
@@ -259,11 +278,88 @@ BIND.check = (v) => {
     try {
       const j = { ...checkResult.job, ...job() };
       const r = await api.coverLetter(j);
-      checkResult = { ...checkResult, job: j, letter: r.text, letterSource: r.source };
+      checkResult = { ...checkResult, job: j, letter: r.text, letterSource: r.source, letterIssues: r.issues };
       render();
     } finally { const bb = $('#makeLetter'); if (bb) bb.disabled = false; }
   });
   $('#copyLetter', v)?.addEventListener('click', () => { navigator.clipboard.writeText($('#letter').value); toast('Copied'); });
+  const busy = (id, label, fn) => safe(async () => {
+    const b = $(id, v); b.disabled = true; b.textContent = label;
+    try { await fn(); } finally { const bb = $(id); if (bb) { bb.disabled = false; } render(); }
+  });
+  $('#aiScore', v).onclick = () => busy('#aiScore', 'Scoring…', async () => {
+    const j = { ...checkResult.job, ...job() };
+    checkResult = { ...checkResult, job: j, ai: await api.aiFit(j) };
+  });
+  $('#tailor', v).onclick = () => busy('#tailor', 'Tailoring…', async () => {
+    const j = { ...checkResult.job, ...job() };
+    checkResult = { ...checkResult, job: j, tailored: await api.tailorCv(j) };
+  });
+  $('#copyCv', v)?.addEventListener('click', () => { navigator.clipboard.writeText(checkResult.tailored.text); toast('Copied'); });
+  $('#saveCvPdf', v)?.addEventListener('click', () => safe(async () => { const p = await api.saveCvPdf(checkResult.tailored.cv, checkResult.job); if (p) toast('Saved PDF'); }));
+};
+
+const aiReady = () => Boolean(S.settings.aiEnabled && S.settings.hasApiKey);
+const issuesBox = (issues) => (issues?.length
+  ? `<div class="issues"><b>Check before sending:</b><ul>${issues.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '');
+
+// ---------------- Find jobs ----------------
+
+let findState = { results: null, errors: [], total: 0, boards: 0, loading: false, filter: true };
+
+PAGES.find = () => {
+  const pr = S.preferences;
+  const f = findState;
+  const rows = f.results || [];
+  return `<div class="page" style="max-width:1100px">
+    <div class="page-head"><h1>Find jobs</h1><p>Search the career boards of companies you like. Results are ranked by how well they fit you.</p></div>
+    <div class="card">
+      <label for="boards">Company career boards (one per line)</label>
+      <textarea id="boards" rows="5" spellcheck="false" placeholder="https://boards.greenhouse.io/company&#10;https://jobs.lever.co/company&#10;https://jobs.ashbyhq.com/company&#10;https://apply.workable.com/company&#10;smartrecruiters:Company">${esc(pr.boards)}</textarea>
+      <p class="small muted" style="margin-top:6px">Works with Greenhouse, Lever, Ashby, Workable and SmartRecruiters: paste the company's careers page link. Uses the boards' official public job APIs.</p>
+      <div class="row" style="margin-top:10px">
+        <label class="switch"><input type="checkbox" id="useFilter" ${f.filter ? 'checked' : ''}> Only roles matching “${esc(pr.targetRoles || 'any')}” in “${esc(pr.locations || 'anywhere')}”</label>
+        <span class="spacer"></span><button id="findGo" class="primary" ${f.loading ? 'disabled' : ''}>${f.loading ? 'Searching…' : 'Search'}</button>
+      </div>
+      ${f.errors.length ? `<div class="issues" style="margin-top:10px"><ul>${f.errors.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+    </div>
+    ${f.results ? `<div class="card" style="padding:6px 10px">
+      <p class="small muted" style="margin:6px 4px">${rows.length} match${rows.length === 1 ? '' : 'es'} out of ${f.total} open jobs on ${f.boards} board${f.boards === 1 ? '' : 's'}.</p>
+      ${rows.length ? `<table><thead><tr><th style="width:6%">Fit</th><th>Role</th><th style="width:16%">Company</th><th style="width:20%">Location</th><th style="width:10%">Posted</th><th style="width:210px"></th></tr></thead><tbody>
+      ${rows.slice(0, 300).map((j, i) => `<tr data-i="${i}">
+        <td><span class="pill ${j.fit >= 70 ? 'good' : j.fit >= 45 ? 'warn' : 'bad'}" title="${esc(j.verdict)}">${j.fit}</span></td>
+        <td>${esc(j.role)}</td><td>${esc(j.company)}</td><td class="small">${esc(j.location)}</td><td class="small muted">${esc(j.posted)}</td>
+        <td class="row" style="flex-wrap:nowrap;gap:4px"><button class="ghost f-check">Check</button><button class="ghost f-save">${S.jobs.some((x) => x.url === j.url) ? 'Saved ✓' : 'Save'}</button><button class="ghost f-open">Apply ↗</button></td>
+      </tr>`).join('')}</tbody></table>` : '<div class="empty">No matching jobs. Try turning off the filter or adding more boards.</div>'}
+    </div>` : ''}
+  </div>`;
+};
+BIND.find = (v) => {
+  $('#boards', v).oninput = (e) => { S.preferences.boards = e.target.value; saveSoon(() => ({ preferences: { boards: S.preferences.boards } })); };
+  $('#useFilter', v).onchange = (e) => { findState.filter = e.target.checked; };
+  $('#findGo', v).onclick = () => safe(async () => {
+    const boards = $('#boards', v).value;
+    if (!boards.trim()) return toast('Add at least one career board link');
+    findState.loading = true; render();
+    try {
+      const opts = findState.filter ? { boards } : { boards, keywords: '', locations: '' };
+      findState = { ...findState, ...(await api.discover(opts)) };
+    } finally { findState.loading = false; render(); }
+  });
+  const jobAt = (b) => findState.results[+b.closest('tr').dataset.i];
+  $$('.f-open', v).forEach((b) => { b.onclick = () => safe(() => api.openJob(jobAt(b).url)); });
+  $$('.f-check', v).forEach((b) => { b.onclick = () => safe(async () => {
+    const j = jobAt(b);
+    checkResult = { job: { url: j.url, text: j.text, company: j.company, role: j.role }, fit: await api.checkFit(j.text) };
+    go('check');
+  }); });
+  $$('.f-save', v).forEach((b) => { b.onclick = () => safe(async () => {
+    const j = jobAt(b);
+    if (S.jobs.some((x) => x.url === j.url)) return toast('Already in your tracker');
+    const entry = { id: Date.now().toString(36), company: j.company, role: j.role, location: j.location, url: j.url, status: 'Saved', dateApplied: '', fit: j.fit, notes: '' };
+    S = await api.update({ jobs: [entry, ...S.jobs] });
+    b.textContent = 'Saved ✓'; updateCounts();
+  }); });
 };
 
 // ---------------- Tracker ----------------
@@ -341,7 +437,7 @@ PAGES.settings = () => {
 BIND.settings = (v) => {
   $('#aiOn', v).onchange = async (e) => { S = await api.update({ settings: { aiEnabled: e.target.checked } }); if (e.target.checked && !S.settings.hasApiKey) toast('Add your API key below'); };
   $('#overwrite', v).onchange = async (e) => { S = await api.update({ settings: { overwriteFilled: e.target.checked } }); };
-  $('#model', v).oninput = (e) => saveSoon(() => ({ settings: { model: e.target.value.trim() || 'claude-sonnet-4-5' } }));
+  $('#model', v).oninput = (e) => saveSoon(() => ({ settings: { model: e.target.value.trim() || 'claude-sonnet-5' } }));
   $('#saveKey', v).onclick = () => safe(async () => {
     const k = $('#apiKey', v).value.trim();
     if (!k) return toast('Paste your key first');

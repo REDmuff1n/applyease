@@ -7,7 +7,16 @@ A desktop app that makes internship and job applications fast. Set up your profi
 3. **Write answers**: open questions ("Why do you want to work here?") and cover letter boxes get drafts, from your saved answers or tailored by Claude. Written fields turn blue.
 4. **You submit**: read it over, press the site's own Submit button, then **Mark applied** to log it in the tracker.
 
-It also has a **fit checker** that scores a listing against what you want (roles, city/remote, paid only, language requirements vs. your levels, years of experience asked for), a **cover letter writer**, and an **application tracker** with CSV export.
+It also has:
+
+- **Find jobs**: paste the career-board links of companies you like (Greenhouse, Lever, Ashby, Workable, SmartRecruiters). ApplyEase pulls every open role through the boards' official public APIs, filters by your target roles and places, and ranks them by fit. Save them to the tracker or open them to apply.
+- **Fit checker**: scores a listing against what you want (roles, city/remote, paid only, language requirements vs. your levels, years of experience asked for). Job pages are read from their structured `JobPosting` data when the site publishes it, so the company, title, location and salary come through cleanly.
+- **AI score** (optional, Claude): a 1–10 recruiter-style score with your strengths, gaps and the keywords to mirror.
+- **Tailored CV** (optional, Claude): rewrites your CV for one job (reorders and rewords, never adds employers, tools or numbers) and saves it as a one-page PDF.
+- **Writing check**: AI letters, answers and CVs are checked for clichés, chatbot leftovers ("Here is…"), unfilled placeholders and numbers that aren't in your own profile or CV. Claude gets one retry, and anything still wrong is shown to you.
+- **Cover letter writer** and an **application tracker** with CSV export.
+
+The form filler handles text fields, dropdowns and yes/no radio buttons, including relocation, 18+, preferred name, state/region, GitHub, years of experience and voluntary diversity (EEO) questions. "Prefer not to say" picks whichever decline option the site uses.
 
 ## Permissions and privacy
 
@@ -57,7 +66,10 @@ git tag v1.0.0 && git push --tags
 src/main.js            app window, apply window, permissions, IPC
 src/autofill.js        the form-filling script run inside job pages
 src/fit.js             offline job-fit scoring
-src/ai.js              cover letters / answers (Claude or templates)
+src/discover.js        job search on Greenhouse / Lever / Ashby / Workable / SmartRecruiters boards
+src/jobdata.js         JSON-LD JobPosting extraction and HTML-to-text
+src/quality.js         clichés, AI leftovers, placeholders and invented-number checks
+src/ai.js              cover letters, answers, AI score, tailored CV (Claude or templates)
 src/store.js           local storage, encrypted API key
 src/preload.js         safe bridge for the main UI
 src/toolbar-preload.js safe bridge for the apply-window toolbar

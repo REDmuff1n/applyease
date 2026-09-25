@@ -6,15 +6,24 @@ function applyEaseFill(profile, opts) {
     // [profile key, regex on field description, autocomplete tokens]
     ['email', /e-?mail/, ['email']],
     ['linkedin', /linked\s?in/, []],
+    ['github', /git\s?hub/, []],
+    ['gender', /\bgender\b|\bsex\b/, ['sex']],
+    ['ethnicity', /\brace\b|ethnic/, []],
+    ['veteran', /veteran/, []],
+    ['disability', /disabilit/, []],
+    ['over18', /\b18\s*(years|\+)|over\s+(the\s+age\s+of\s+)?18|at\s+least\s+18|legal\s+age|age\s+of\s+majority/, []],
+    ['preferredName', /preferred\s+(first\s+)?name|nick\s?name|goes\s+by/, ['nickname']],
     ['firstName', /first[\s_-]?name|given[\s_-]?name|fore[\s_-]?name|\bfname\b|vorname|keresztn/, ['given-name']],
     ['lastName', /last[\s_-]?name|sur[\s_-]?name|family[\s_-]?name|\blname\b|nachname|vezet[eé]kn/, ['family-name']],
     ['fullName', /^\s*(your\s+)?(full\s+|legal\s+|candidate\s+)?name\s*\*?\s*$|full[\s_-]?name|\bname\b(?!.*(company|school|university|employer|reference|manager))/, ['name']],
     ['phone', /phone|mobile|telephone|\btel\b|cell/, ['tel', 'tel-national']],
+    ['relocate', /relocat/, []],
+    ['yearsExperience', /years?\s+of\s+(relevant\s+|professional\s+|work\s+)?experience|how\s+many\s+years/, []],
     ['postcode', /zip|postal|post[\s_-]?code/, ['postal-code']],
     ['city', /\bcity\b|\btown\b|location\s*\(city\)/, ['address-level2']],
     ['country', /\bcountry\b/, ['country', 'country-name']],
     ['address', /address|street/, ['street-address', 'address-line1']],
-    ['website', /website|portfolio|personal\s+(site|url)|github|other\s+url/, ['url']],
+    ['website', /website|portfolio|personal\s+(site|url)|other\s+url/, ['url']],
     ['university', /school|university|college|institution|\buni\b/, []],
     ['degree', /degree|qualification|education\s+level/, []],
     ['major', /major|field\s+of\s+study|discipline|programme|program\b|subject/, []],
@@ -28,6 +37,7 @@ function applyEaseFill(profile, opts) {
     ['pronouns', /pronoun/, []],
     ['headline', /headline|current\s+title|job\s+title/, ['organization-title']],
     ['languages', /languages?\s+(you\s+)?spok|which\s+languages|language\s+skills/, []],
+    ['region', /\b(state|province|region|county)\b/, ['address-level1']],
     ['coverLetter', /cover\s*letter|motivation(al)?\s+letter/, []]
   ];
 
@@ -73,17 +83,61 @@ function applyEaseFill(profile, opts) {
     el.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
-  function pickOption(sel, value) {
+  // "Prefer not to say" is worded differently on every form.
+  const DECLINE = /decline|prefer\s+not|rather\s+not|(do\s+not|don.?t)\s+(wish|want)|not\s+(wish|want)\s+to|not\s+to\s+(say|answer|disclose|self)/;
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // items: [{ text, ... }]; returns the item that best matches the saved value.
+  function bestChoice(items, value) {
     const v = clean(value).toLowerCase();
-    if (!v) return false;
+    if (!v) return null;
+    const t = (x) => clean(x.text).toLowerCase();
+    const starts = new RegExp('^' + reEsc(v) + '(\\b|$)');
+    return items.find((x) => t(x) === v)
+      || items.find((x) => starts.test(t(x)))
+      || items.find((x) => v.length > 2 && t(x).includes(v))
+      || items.find((x) => { const s = t(x); return s.length > 2 && new RegExp('\\b' + reEsc(s) + '\\b').test(v); })
+      || (DECLINE.test(v) ? items.find((x) => DECLINE.test(t(x))) : null);
+  }
+
+  function pickOption(sel, value) {
     const opts = Array.from(sel.options).filter((o) => o.value !== '' && !o.disabled);
-    let o = opts.find((x) => clean(x.text).toLowerCase() === v)
-      || opts.find((x) => clean(x.text).toLowerCase().startsWith(v))
-      || opts.find((x) => v.length > 2 && clean(x.text).toLowerCase().includes(v))
-      || opts.find((x) => { const t = clean(x.text).toLowerCase(); return t.length > 2 && v.includes(t); });
+    const o = bestChoice(opts, value);
     if (!o) return false;
     setValue(sel, o.value);
     return true;
+  }
+
+  function radioLabel(r) {
+    const bits = [];
+    if (r.id) { try { const l = document.querySelector(`label[for="${CSS.escape(r.id)}"]`); if (l) bits.push(l.innerText); } catch (e) { /* ignore */ } }
+    const wrap = r.closest('label'); if (wrap) bits.push(wrap.innerText);
+    if (r.getAttribute('aria-label')) bits.push(r.getAttribute('aria-label'));
+    return clean(bits[0] || r.value);
+  }
+
+  // The question text of a radio group: fieldset legend, radiogroup label, or the text around it.
+  function groupQuestion(radios) {
+    const first = radios[0];
+    const fs = first.closest('fieldset');
+    const legend = fs && fs.querySelector('legend');
+    if (legend && clean(legend.innerText)) return clean(legend.innerText).toLowerCase();
+    const rg = first.closest('[role=radiogroup]');
+    if (rg) {
+      const lb = rg.getAttribute('aria-labelledby');
+      const txt = rg.getAttribute('aria-label') || (lb ? lb.split(/\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' ') : '');
+      if (clean(txt)) return clean(txt).toLowerCase();
+    }
+    let box = first.parentElement;
+    while (box && !radios.every((r) => box.contains(r))) box = box.parentElement;
+    const optionText = radios.map(radioLabel);
+    for (let i = 0; box && i < 3; i++, box = box.parentElement) {
+      let txt = clean(box.innerText);
+      optionText.forEach((o) => { txt = txt.replace(o, ' '); });
+      txt = clean(txt);
+      if (txt.length > 3) return txt.slice(0, 300).toLowerCase();
+    }
+    return clean(first.name).toLowerCase();
   }
 
   function mark(el, color) {
@@ -136,6 +190,31 @@ function applyEaseFill(profile, opts) {
     }
   }
 
+  // Radio button groups (yes/no questions, EEO). Picking an option is the same as typing an answer.
+  const groups = new Map();
+  for (const r of document.querySelectorAll('input[type=radio]')) {
+    if (r.disabled || !visible(r) && !visible(r.closest('label') || r)) continue;
+    const k = r.name || r.closest('[role=radiogroup],fieldset') || r;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  for (const radios of groups.values()) {
+    if (radios.some((r) => r.checked) && !OVERWRITE) continue;
+    const q = groupQuestion(radios);
+    let key = null;
+    for (const [k, re] of RULES) { if (re.test(q)) { key = k; break; } }
+    if (!key || ['fullName', 'firstName', 'lastName', 'email', 'phone', 'coverLetter'].includes(key)) {
+      if (radios.some((r) => r.required)) { mark(radios[0].closest('fieldset,[role=radiogroup]') || radios[0].parentElement, '#e2a400'); review.push(q.slice(0, 140)); }
+      continue;
+    }
+    const pick = bestChoice(radios.map((r) => ({ text: radioLabel(r), r })), values[key]);
+    if (!pick) { review.push(q.slice(0, 140)); continue; }
+    pick.r.click();
+    if (!pick.r.checked) { pick.r.checked = true; pick.r.dispatchEvent(new Event('change', { bubbles: true })); }
+    mark(pick.r.closest('fieldset,[role=radiogroup]') || pick.r.parentElement, '#22a06b');
+    filled.push(q.slice(0, 140));
+  }
+
   // Mark the most likely CV upload input so the app can attach the file.
   const files = Array.from(document.querySelectorAll('input[type=file]'));
   let cv = files.find((f) => /resume|cv|curriculum/.test(describe(f))) || files[0];
@@ -168,10 +247,24 @@ function applyEaseAnswer(answers) {
 function applyEasePageInfo() {
   const og = (p) => document.querySelector(`meta[property="${p}"]`)?.content || '';
   const h1 = document.querySelector('h1')?.innerText || '';
+  // schema.org JobPosting, if the page publishes one (most ATS and job boards do).
+  const find = (n, d) => {
+    if (!n || typeof n !== 'object' || d > 6) return null;
+    if (Array.isArray(n)) { for (const x of n) { const f = find(x, d + 1); if (f) return f; } return null; }
+    if ([].concat(n['@type'] || []).includes('JobPosting')) return n;
+    for (const v of Object.values(n)) { const f = find(v, d + 1); if (f) return f; }
+    return null;
+  };
+  let posting = null;
+  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try { posting = find(JSON.parse(s.textContent), 0); } catch (e) { /* ignore */ }
+    if (posting) break;
+  }
   return {
     title: og('og:title') || document.title || h1,
     h1,
     site: og('og:site_name'),
+    posting,
     text: (document.body?.innerText || '').slice(0, 20000)
   };
 }

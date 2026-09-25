@@ -53,7 +53,8 @@ $('cv').onclick = () => run('cv', async () => {
 $('answer').onclick = () => run('answer', async () => {
   status('Writing answers…');
   const r = await tb.answer();
-  status(`Wrote ${r.count} of ${r.total} answers (blue)${r.usedAi ? ' with Claude' : ' from your saved answers'}. Read them before you submit.`, r.count ? 'ok' : '');
+  const warn = r.warnings?.length ? ` Check: ${r.warnings.join('; ')}` : '';
+  status(`Wrote ${r.count} of ${r.total} answers (blue)${r.usedAi ? ' with Claude' : ' from your saved answers'}. Read them before you submit.${warn}`, r.count && !warn ? 'ok' : '');
 });
 
 $('applied').onclick = () => run('applied', async () => {

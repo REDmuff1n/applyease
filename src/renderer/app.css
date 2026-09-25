@@ -39,7 +39,7 @@ main { flex: 1; overflow: auto; padding: 26px 32px 60px; }
 .qa:last-child { border-bottom: 0; }
 
 .fit { display: flex; gap: 18px; align-items: flex-start; }
-.score { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; font-size: 26px; font-weight: 700; flex: none; border: 6px solid; }
+.score { width: 84px; height: 84px; border-radius: 50%; display: flex; align-items: baseline; justify-content: center; line-height: 72px; font-size: 26px; font-weight: 700; flex: none; border: 6px solid; }
 .score.good { border-color: var(--good); color: var(--good); }
 .score.warn { border-color: var(--warn); color: var(--warn); }
 .score.bad { border-color: var(--bad); color: var(--bad); }
@@ -62,3 +62,6 @@ td input:hover, td select:hover { border-color: var(--line); }
 .switch input { width: auto; }
 details summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 @media (max-width: 1000px) { .stats, .steps { grid-template-columns: repeat(2, 1fr); } }
+.score small { font-size: 12px; font-weight: 600; opacity: .7; margin-left: 1px; }
+.issues { background: var(--warn-soft); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 13px; }
+.issues ul { margin: 4px 0 0 16px; padding: 0; }

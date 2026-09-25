@@ -5,6 +5,9 @@ const store = require('./store');
 const { checkFit, guessMeta } = require('./fit');
 const ai = require('./ai');
 const { fillSource, answerSource, infoSource } = require('./autofill');
+const { extractJobPosting, fromPosting, htmlToText, jobText } = require('./jobdata');
+const { discover } = require('./discover');
+const { checkWriting } = require('./quality');
 
 app.setName('ApplyEase');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -135,6 +138,21 @@ async function pageInfo(ctx) {
   return { ...r, url: ctx.site.webContents.getURL() };
 }
 
+// Company, role, location and a clean text for the job on the current page.
+function jobFromInfo(info) {
+  const posting = fromPosting(info.posting);
+  const meta = guessMeta(info.title, info.text, info.url);
+  if (info.h1 && !meta.role) meta.role = info.h1.slice(0, 120);
+  if (info.site) meta.company = info.site;
+  return {
+    url: info.url,
+    company: posting?.company || meta.company,
+    role: posting?.role || meta.role,
+    location: posting?.location || '',
+    text: posting ? jobText(posting, info.text) : info.text
+  };
+}
+
 async function askSitePermission(ctx, host) {
   const s = store.get().settings;
   if (s.allowedSites.includes(host)) return true;
@@ -180,21 +198,64 @@ handle('job:fetch', async (_e, url) => {
   const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'text/html' }, redirect: 'follow' });
   if (!res.ok) throw new Error(`The site answered ${res.status}. Open it with "Apply" instead, or paste the text.`);
   const html = await res.text();
-  const title = (html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i) || html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '';
-  const text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<(br|\/p|\/li|\/h\d|\/div)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;|&rsquo;/g, "'").replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
-  const meta = guessMeta(decode(title), text, url);
-  return { url, title: decode(title), text: text.slice(0, 20000), ...meta };
+  const title = htmlToText((html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)/i) || html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '');
+  const posting = extractJobPosting(html);
+  const text = htmlToText(html);
+  const meta = guessMeta(title, text, url);
+  if (posting) {
+    // Structured JobPosting data: clean description, exact company and title.
+    return { url, title, company: posting.company || meta.company, role: posting.role || meta.role, location: posting.location, text: jobText(posting, text).slice(0, 20000), structured: true };
+  }
+  return { url, title, text: text.slice(0, 20000), ...meta };
 });
 
-function decode(s) { return String(s).replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim(); }
-
 handle('letter:generate', async (_e, job) => ai.coverLetter(store.get(), store.getApiKey(), job));
+handle('fit:ai', async (_e, job) => ai.aiFit(store.get(), store.getApiKey(), job));
+handle('cv:tailor', async (_e, job) => ai.tailorCv(store.get(), store.getApiKey(), job));
+
+handle('cv:savePdf', async (_e, cv, job) => {
+  const safeName = (s) => String(s || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
+  const r = await dialog.showSaveDialog(mainWin, {
+    title: 'Save tailored CV',
+    defaultPath: path.join(app.getPath('documents'), `${safeName(cv.name) || 'CV'}_${safeName(job?.company) || 'tailored'}.pdf`),
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  if (r.canceled || !r.filePath) return false;
+  const win = new BrowserWindow({ show: false, webPreferences: { javascript: false, sandbox: true } });
+  try {
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(cvHtml(cv)));
+    const pdf = await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'custom', top: 0.5, bottom: 0.5, left: 0.6, right: 0.6 } });
+    fs.writeFileSync(r.filePath, pdf);
+  } finally { win.destroy(); }
+  shell.openPath(r.filePath);
+  return r.filePath;
+});
+
+function cvHtml(cv) {
+  const e = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const sections = (cv.sections || []).map((s) => `<h2>${e(s.title)}</h2>${(s.items || []).map((it) => `
+    <div class="item"><div class="ih"><b>${e(it.heading)}</b><span>${e(it.sub)}</span></div>
+    ${it.bullets?.length ? `<ul>${it.bullets.map((b) => `<li>${e(b)}</li>`).join('')}</ul>` : ''}</div>`).join('')}`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+    body{font-family:Calibri,'Segoe UI',Arial,sans-serif;font-size:10.5pt;color:#111;line-height:1.32;margin:0}
+    h1{font-size:20pt;margin:0}.contact{color:#444;margin:2px 0 6px}.headline{font-weight:600;margin-bottom:6px}
+    h2{font-size:11pt;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #999;margin:10px 0 4px;padding-bottom:1px}
+    .item{margin-bottom:5px}.ih{display:flex;justify-content:space-between;gap:12px}.ih span{color:#444;white-space:nowrap}
+    ul{margin:2px 0 0 16px;padding:0}li{margin:1px 0}p{margin:0}
+  </style></head><body>
+    <h1>${e(cv.name)}</h1><div class="contact">${e(cv.contact)}</div>
+    ${cv.headline ? `<div class="headline">${e(cv.headline)}</div>` : ''}
+    ${cv.summary ? `<h2>Summary</h2><p>${e(cv.summary)}</p>` : ''}
+    ${cv.skills?.length ? `<h2>Skills</h2><p>${cv.skills.map(e).join(' · ')}</p>` : ''}
+    ${sections}
+  </body></html>`;
+}
+
+handle('jobs:discover', async (_e, opts) => {
+  const st = store.get();
+  if (opts && typeof opts.boards === 'string') store.update({ preferences: { boards: opts.boards } });
+  return discover(st, { boards: opts?.boards ?? st.preferences.boards, keywords: opts?.keywords, locations: opts?.locations });
+});
 
 handle('cv:pick', async () => {
   const r = await dialog.showOpenDialog(mainWin, {
@@ -213,7 +274,7 @@ handle('cv:pick', async () => {
 
 handle('cv:import', async (_e, text) => {
   const fields = await ai.parseCv(store.get(), store.getApiKey(), text);
-  return store.update({ profile: fields });
+  return store.update({ profile: { ...fields, cvText: String(text).slice(0, 30000) } });
 });
 
 handle('job:open', (_e, url) => { openJobWindow(url); return true; });
@@ -270,7 +331,7 @@ handle('tb:nav', (e, action, url) => {
 handle('tb:fit', async (e) => {
   const ctx = ctxFor(e);
   const info = await pageInfo(ctx);
-  ctx.lastFit = checkFit(info.text, store.get());
+  ctx.lastFit = checkFit(jobFromInfo(info).text, store.get());
   return ctx.lastFit;
 });
 
@@ -283,6 +344,7 @@ handle('tb:fill', async (e) => {
   const st = store.get();
   const profile = { ...st.profile };
   delete profile.cvPath;
+  delete profile.cvText;
   const results = await runInFrames(ctx, fillSource, [profile, { overwrite: st.settings.overwriteFilled }]);
   const report = { filled: [], review: [], questions: [], hasFileInput: false };
   ctx.questions = [];
@@ -304,9 +366,7 @@ handle('tb:answer', async (e) => {
   if (!ctx.questions.length) throw new Error('Press "Fill form" first so I can find the open questions.');
   const st = store.get();
   const key = store.getApiKey();
-  const info = await pageInfo(ctx);
-  const meta = guessMeta(info.title, info.text, info.url);
-  const job = { ...meta, text: info.text };
+  const job = jobFromInfo(await pageInfo(ctx));
   const letterQs = ctx.questions.filter((q) => q.isCoverLetter);
   const otherQs = ctx.questions.filter((q) => !q.isCoverLetter);
   const answers = [];
@@ -321,7 +381,9 @@ handle('tb:answer', async (e) => {
     if (!mine.length) continue;
     try { count += await q.frame.executeJavaScript(`(${answerSource})(${JSON.stringify(mine)})`); } catch { /* frame gone */ }
   }
-  return { count, total: ctx.questions.length, usedAi: Boolean(st.settings.aiEnabled && key) };
+  const usedAi = Boolean(st.settings.aiEnabled && key);
+  const warnings = usedAi ? answers.flatMap((a) => checkWriting(a.answer).issues) : [];
+  return { count, total: ctx.questions.length, usedAi, warnings: [...new Set(warnings)] };
 });
 
 handle('tb:attachCv', async (e) => {
@@ -361,10 +423,8 @@ handle('tb:save', async (e, status) => {
   const ctx = ctxFor(e);
   const info = await pageInfo(ctx);
   const st = store.get();
-  const meta = guessMeta(info.title, info.text, info.url);
-  if (info.h1 && !meta.role) meta.role = info.h1.slice(0, 120);
-  if (info.site) meta.company = info.site;
-  const fit = ctx.lastFit || checkFit(info.text, st);
+  const meta = jobFromInfo(info);
+  const fit = ctx.lastFit || checkFit(meta.text, st);
   const existing = st.jobs.find((j) => j.url === info.url);
   const today = new Date().toISOString().slice(0, 10);
   let jobs;
@@ -373,7 +433,7 @@ handle('tb:save', async (e, status) => {
   } else {
     jobs = [{
       id: Date.now().toString(36),
-      company: meta.company, role: meta.role, location: '',
+      company: meta.company, role: meta.role, location: meta.location || '',
       url: info.url, status: status || 'Applied',
       dateApplied: status === 'Saved' ? '' : today,
       fit: fit.score, notes: ''

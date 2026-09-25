@@ -21,6 +21,7 @@ fs.writeFileSync(path.join(tmp, 'applyease-data.json'), JSON.stringify({
     university: 'Corvinus University of Budapest', degree: 'BSc', major: 'International Business',
     skills: 'Excel, financial modelling, Python', languages: 'English C1, Bengali native, Hungarian A1',
     startDate: 'Immediately', howHeard: 'LinkedIn', workAuth: 'Yes', needsSponsorship: 'No', cvPath: cv, cvName: 'Test_CV.pdf',
+    preferredName: 'Ari', relocate: 'No',
     summary: 'Feature writer at a national newspaper; freelance designer for 20+ clients.'
   },
   answers: [{ q: 'Why do you want to work here', a: 'Because I want hands-on experience in financial analysis.' }],
@@ -58,7 +59,7 @@ app.whenReady().then(async () => {
     const url = `http://127.0.0.1:${server.address().port}/apply`;
     await wait(1500);
     const main = BrowserWindow.getAllWindows()[0];
-    for (const tab of ['home', 'profile', 'check', 'tracker', 'settings']) {
+    for (const tab of ['home', 'profile', 'find', 'check', 'tracker', 'settings']) {
       await main.webContents.executeJavaScript(`document.querySelector('[data-tab=${tab}]').click()`);
       await wait(300);
       await snap(main.webContents, `main-${tab}.png`);
@@ -88,6 +89,9 @@ app.whenReady().then(async () => {
     assert.strictEqual(await v('#hear'), 'LinkedIn');
     assert.strictEqual(await v('#ref'), '', 'employer name must not get the applicant name');
     assert.strictEqual(await v('#vis'), 'No');
+    assert.strictEqual(await v('#pref'), 'Ari', 'preferred name');
+    assert.strictEqual(await v('#gen'), 'Decline To Self Identify', '"Prefer not to say" picks the decline option');
+    assert.strictEqual(await ctx.site.webContents.executeJavaScript('document.querySelector("[name=reloc]:checked")?.value'), '0', 'relocate radio = No');
     assert.strictEqual(rep.questions.length, 2, 'two open questions');
     const frame = ctx.site.webContents.mainFrame.frames[0];
     assert.strictEqual(await frame.executeJavaScript('document.querySelector("#c").value'), 'Budapest', 'iframe field filled');
@@ -112,7 +116,8 @@ app.whenReady().then(async () => {
     const jobs = store.get().jobs;
     assert.strictEqual(jobs.length, 4);
     assert.strictEqual(jobs[0].status, 'Applied');
-    assert(/acme/i.test(jobs[0].company), 'company guessed');
+    assert.strictEqual(jobs[0].company, 'Acme Capital', 'company from JSON-LD');
+    assert.strictEqual(jobs[0].location, 'Budapest, Hungary', 'location from JSON-LD');
 
     const title = await ctx.site.webContents.executeJavaScript('document.title');
     assert.notStrictEqual(title, 'SUBMITTED', 'app must never submit');

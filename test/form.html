@@ -1,5 +1,6 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Junior Financial Analyst Intern at Acme Capital</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"JobPosting","title":"Junior Financial Analyst Intern","hiringOrganization":{"@type":"Organization","name":"Acme Capital"},"jobLocation":{"@type":"Place","address":{"addressLocality":"Budapest","addressCountry":"Hungary"}},"description":"<p>Paid internship, 300,000 HUF / month. Support our analyst team with Excel models. Fluent English required.</p>"}</script>
 <style>body{font-family:sans-serif;max-width:720px;margin:24px auto;padding:0 16px}label{display:block;margin-top:12px;font-weight:600}input,select,textarea{width:100%;padding:6px;margin-top:4px}</style></head>
 <body>
 <h1>Junior Financial Analyst Intern</h1>
@@ -18,6 +19,11 @@
   <label for="why">Why do you want to work at Acme? *</label><textarea id="why" required></textarea>
   <label for="cl">Cover letter</label><textarea id="cl"></textarea>
   <label for="ref">Company name of your last employer</label><input id="ref">
+  <label for="pref">Preferred first name</label><input id="pref">
+  <fieldset><legend>Are you willing to relocate? *</legend>
+    <label><input type="radio" name="reloc" value="1" required> Yes</label>
+    <label><input type="radio" name="reloc" value="0"> No</label></fieldset>
+  <label for="gen">Gender</label><select id="gen"><option value="">Select…</option><option>Male</option><option>Female</option><option>Decline To Self Identify</option></select>
   <label for="vis">Will you require visa sponsorship? *</label><select id="vis" required><option value="">Select…</option><option>Yes</option><option>No</option></select>
   <iframe src="/frame.html" style="width:100%;height:120px;border:1px dashed #aaa;margin-top:12px"></iframe>
   <button type="submit">Submit application</button>

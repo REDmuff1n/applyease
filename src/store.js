@@ -6,14 +6,17 @@ const { app, safeStorage } = require('electron');
 
 const DEFAULTS = {
   profile: {
-    firstName: '', lastName: '', email: '', phone: '',
-    address: '', city: '', postcode: '', country: '',
-    linkedin: '', website: '',
+    firstName: '', lastName: '', preferredName: '', email: '', phone: '',
+    address: '', city: '', region: '', postcode: '', country: '',
+    linkedin: '', github: '', website: '',
     university: '', degree: '', major: '', gradYear: '', gpa: '',
-    headline: '', summary: '', skills: '', languages: '',
+    headline: '', summary: '', skills: '', languages: '', yearsExperience: '',
     workAuth: '', needsSponsorship: '', startDate: 'Immediately', salary: 'Open to discussion',
+    relocate: '', over18: 'Yes',
     howHeard: 'LinkedIn', pronouns: '',
+    gender: 'Prefer not to say', ethnicity: 'Prefer not to say', veteran: 'Prefer not to say', disability: 'Prefer not to say',
     coverLetterBase: '',
+    cvText: '',
     cvPath: '', cvName: ''
   },
   answers: [
@@ -26,12 +29,13 @@ const DEFAULTS = {
     targetRoles: 'analyst, finance, business',
     locations: 'Remote',
     avoidKeywords: 'unpaid, commission only',
-    paidOnly: true
+    paidOnly: true,
+    boards: ''
   },
   jobs: [],
   settings: {
     aiEnabled: false,
-    model: 'claude-sonnet-4-5',
+    model: 'claude-sonnet-5',
     apiKeyEnc: '',
     apiKeyPlain: '',
     allowedSites: [],
