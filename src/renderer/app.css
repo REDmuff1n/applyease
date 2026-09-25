@@ -65,3 +65,10 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .score small { font-size: 12px; font-weight: 600; opacity: .7; margin-left: 1px; }
 .issues { background: var(--warn-soft); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 13px; }
 .issues ul { margin: 4px 0 0 16px; padding: 0; }
+.pill.new, .count.new { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.bar { height: 8px; border-radius: 99px; background: var(--panel-2); overflow: hidden; margin: 10px 0 6px; }
+.bar > div { height: 100%; background: var(--accent); transition: width .3s; }
+.sources { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 8px; }
+.source { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
+.source p { margin: 4px 0 8px; }
+@media (max-width: 1000px) { .sources { grid-template-columns: 1fr; } }

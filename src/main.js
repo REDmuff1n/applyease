@@ -8,6 +8,8 @@ const { fillSource, answerSource, infoSource } = require('./autofill');
 const { extractJobPosting, fromPosting, htmlToText, jobText } = require('./jobdata');
 const { discover } = require('./discover');
 const { checkWriting } = require('./quality');
+const llm = require('./llm');
+const feeds = require('./feeds');
 
 app.setName('ApplyEase');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -183,17 +185,33 @@ function handle(channel, fn) {
 handle('state:get', () => store.publicState());
 handle('state:update', (_e, partial) => store.update(partial));
 
+// The AI settings as the ai module needs them, or null when AI is off / not set up.
+function aiConfig() {
+  const s = store.get().settings;
+  if (!store.publicState().settings.aiReady) return null;
+  return { provider: s.aiProvider, model: s.model, baseUrl: s.baseUrl, apiKey: store.getApiKey() };
+}
+// Same, but for Test / model list buttons that work before AI is switched on.
+function aiConfigDraft() {
+  const s = store.get().settings;
+  return { provider: s.aiProvider, model: s.model, baseUrl: s.baseUrl, apiKey: store.getApiKey(), timeoutMs: 60000 };
+}
+
+handle('ai:providers', () => Object.fromEntries(Object.entries(llm.PROVIDERS).map(([id, p]) => [id, { ...p, needsKey: llm.needsKey(id) }])));
 handle('apikey:set', async (_e, key) => { store.setApiKey(key); return store.publicState(); });
-handle('apikey:test', async () => {
-  const key = store.getApiKey();
-  if (!key) throw new Error('No API key saved.');
-  await ai.testKey(key, store.get().settings.model);
-  return true;
+handle('apikey:test', async () => { await ai.testKey(aiConfigDraft()); return true; });
+handle('ai:models', async () => llm.listModels(aiConfigDraft()));
+handle('secret:set', async (_e, name, value) => {
+  if (!/^feed:[a-z]+$/.test(name)) throw new Error('Unknown key');
+  store.setSecret(name, value);
+  return store.publicState();
 });
 
 handle('fit:check', (_e, text) => checkFit(text, store.get()));
 
-handle('job:fetch', async (_e, url) => {
+handle('job:fetch', (_e, url) => fetchJobPage(url));
+
+async function fetchJobPage(url) {
   url = normaliseUrl(url);
   const res = await fetch(url, { headers: { 'user-agent': UA, accept: 'text/html' }, redirect: 'follow' });
   if (!res.ok) throw new Error(`The site answered ${res.status}. Open it with "Apply" instead, or paste the text.`);
@@ -207,26 +225,33 @@ handle('job:fetch', async (_e, url) => {
     return { url, title, company: posting.company || meta.company, role: posting.role || meta.role, location: posting.location, text: jobText(posting, text).slice(0, 20000), structured: true };
   }
   return { url, title, text: text.slice(0, 20000), ...meta };
-});
+}
 
-handle('letter:generate', async (_e, job) => ai.coverLetter(store.get(), store.getApiKey(), job));
-handle('fit:ai', async (_e, job) => ai.aiFit(store.get(), store.getApiKey(), job));
-handle('cv:tailor', async (_e, job) => ai.tailorCv(store.get(), store.getApiKey(), job));
+handle('letter:generate', async (_e, job) => ai.coverLetter(store.get(), aiConfig(), job));
+handle('fit:ai', async (_e, job) => ai.aiFit(store.get(), aiConfig(), job));
+handle('cv:tailor', async (_e, job) => ai.tailorCv(store.get(), aiConfig(), job));
+
+const safeName = (s) => String(s || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
+
+async function writeCvPdf(cv, filePath) {
+  const win = new BrowserWindow({ show: false, webPreferences: { javascript: false, sandbox: true } });
+  try {
+    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(cvHtml(cv)));
+    const pdf = await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'custom', top: 0.5, bottom: 0.5, left: 0.6, right: 0.6 } });
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, pdf);
+  } finally { win.destroy(); }
+  return filePath;
+}
 
 handle('cv:savePdf', async (_e, cv, job) => {
-  const safeName = (s) => String(s || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_');
   const r = await dialog.showSaveDialog(mainWin, {
     title: 'Save tailored CV',
     defaultPath: path.join(app.getPath('documents'), `${safeName(cv.name) || 'CV'}_${safeName(job?.company) || 'tailored'}.pdf`),
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
   });
   if (r.canceled || !r.filePath) return false;
-  const win = new BrowserWindow({ show: false, webPreferences: { javascript: false, sandbox: true } });
-  try {
-    await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(cvHtml(cv)));
-    const pdf = await win.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'custom', top: 0.5, bottom: 0.5, left: 0.6, right: 0.6 } });
-    fs.writeFileSync(r.filePath, pdf);
-  } finally { win.destroy(); }
+  await writeCvPdf(cv, r.filePath);
   shell.openPath(r.filePath);
   return r.filePath;
 });
@@ -257,6 +282,158 @@ handle('jobs:discover', async (_e, opts) => {
   return discover(st, { boards: opts?.boards ?? st.preferences.boards, keywords: opts?.keywords, locations: opts?.locations });
 });
 
+// ---------- Live jobs dashboard ----------
+// Cached in its own file so the main data file stays small.
+
+let liveCache = null;
+let liveBusy = null;
+const liveFile = () => path.join(app.getPath('userData'), 'live-jobs.json');
+
+function loadLive() {
+  if (liveCache) return liveCache;
+  try { liveCache = JSON.parse(fs.readFileSync(liveFile(), 'utf8')); } catch { liveCache = { jobs: [], status: {}, lastViewedAt: '' }; }
+  return liveCache;
+}
+
+function saveLive() {
+  const tmp = liveFile() + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(liveCache));
+  fs.renameSync(tmp, liveFile());
+}
+
+// What the dashboard shows: every cached job with its fit score, without the long text.
+function liveView() {
+  const st = store.get();
+  const c = loadLive();
+  return {
+    fetchedAt: c.fetchedAt || '',
+    lastViewedAt: c.lastViewedAt || '',
+    refreshing: Boolean(liveBusy),
+    status: c.status || {},
+    sources: Object.fromEntries(Object.entries(feeds.SOURCES).map(([id, s]) => [id, { label: s.label, about: s.about, key: s.key || '', keyUrl: s.keyUrl || '', enabled: Boolean(st.feeds[id]) }])),
+    links: feeds.boardSearchLinks(st.preferences, 1),
+    jobs: c.jobs.map(({ text, ...j }) => {
+      // title, company and place count too: some feeds only send a short description
+      const f = checkFit(`Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n${(j.tags || []).join(', ')}\n\n${text || ''}`, st);
+      return { ...j, fit: f.score, verdict: f.verdict };
+    })
+  };
+}
+
+function refreshLive(force) {
+  if (liveBusy) return liveBusy;
+  const st = store.get();
+  const keys = Object.fromEntries(Object.values(feeds.SOURCES).filter((s) => s.key).map((s) => [s.key, store.getSecret(s.key)]));
+  liveBusy = feeds.refresh(st, loadLive(), { keys, force })
+    .then((c) => { liveCache = c; saveLive(); })
+    .finally(() => { liveBusy = null; if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('live:changed'); });
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('live:changed');
+  return liveBusy;
+}
+
+let liveTimer = null;
+function scheduleLive() {
+  clearInterval(liveTimer);
+  const mins = Number(store.get().feeds.autoRefreshMins) || 0;
+  if (mins > 0) liveTimer = setInterval(() => refreshLive(false).catch(() => {}), mins * 60000);
+}
+
+handle('live:get', () => liveView());
+handle('live:refresh', async (_e, force) => { await refreshLive(Boolean(force)); return liveView(); });
+handle('live:markSeen', () => { loadLive().lastViewedAt = new Date().toISOString(); saveLive(); return true; });
+handle('live:job', (_e, id) => loadLive().jobs.find((j) => j.id === id) || null);
+handle('live:reschedule', () => { scheduleLive(); return true; });
+
+// ---------- Batch: score and tailor saved jobs ----------
+
+let batch = null; // { cancel: boolean }
+
+function sendBatch(p) { if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('batch:progress', p); }
+
+function updateJob(id, patch) {
+  store.update({ jobs: store.get().jobs.map((j) => (j.id === id ? { ...j, ...patch } : j)) });
+  notifyMain();
+}
+
+async function jobTextFor(job) {
+  if (job.text && job.text.length > 200) return job.text;
+  const live = loadLive().jobs.find((j) => j.url === job.url);
+  if (live?.text?.length > 200) return live.text;
+  const page = await fetchJobPage(job.url);
+  return page.text;
+}
+
+handle('batch:run', async (_e, opts) => {
+  if (batch) throw new Error('A batch is already running.');
+  const cfg = aiConfig();
+  const o = { ...store.get().settings.batch, ...(opts || {}) };
+  store.update({ settings: { batch: o } });
+  if ((o.aiScore || o.tailor || o.letter) && !cfg) throw new Error('Turn on AI in Settings to score and tailor.');
+  const ids = opts?.ids?.length ? opts.ids : store.get().jobs.filter((j) => j.status === 'Saved' && j.url).map((j) => j.id);
+  batch = { cancel: false };
+  const summary = { done: 0, total: ids.length, tailored: 0, skipped: 0, errors: [] };
+  const outRoot = path.join(app.getPath('documents'), 'ApplyEase');
+  try {
+    for (const id of ids) {
+      if (batch.cancel) break;
+      const job = store.get().jobs.find((j) => j.id === id);
+      if (!job) continue;
+      const name = `${job.role || 'Role'} at ${job.company || 'company'}`;
+      try {
+        sendBatch({ ...summary, step: `Reading ${name}` });
+        const text = await jobTextFor(job);
+        if (!text || text.length < 150) throw new Error('could not read the job description');
+        const st = store.get();
+        const full = { url: job.url, company: job.company, role: job.role, text };
+        const patch = { fit: checkFit(text, st).score, text: text.slice(0, 6000) };
+        if (o.aiScore && cfg) {
+          sendBatch({ ...summary, step: `Scoring ${name}` });
+          const s = await ai.aiFit(st, cfg, full);
+          Object.assign(patch, { aiScore: s.score, aiReason: [s.reasoning, s.gaps.length && 'Gaps: ' + s.gaps.join(', ')].filter(Boolean).join(' ') });
+        }
+        const good = patch.aiScore != null ? patch.aiScore >= Number(o.minScore || 0) : patch.fit >= 60;
+        if ((o.tailor || o.letter) && cfg && good && !batch.cancel) {
+          const folder = path.join(outRoot, safeName(`${job.company || 'Company'} - ${job.role || 'Role'}`).slice(0, 90));
+          patch.folder = folder;
+          if (o.tailor) {
+            sendBatch({ ...summary, step: `Tailoring CV for ${name}` });
+            const t = await ai.tailorCv(st, cfg, full);
+            patch.cvPdf = await writeCvPdf(t.cv, path.join(folder, `${safeName(t.cv.name) || 'CV'}_CV.pdf`));
+            if (t.issues.length) patch.notes = [job.notes, 'CV check: ' + t.issues.join('; ')].filter(Boolean).join(' | ');
+          }
+          if (o.letter) {
+            sendBatch({ ...summary, step: `Writing cover letter for ${name}` });
+            const l = await ai.coverLetter(st, cfg, full);
+            patch.letterFile = path.join(folder, 'Cover letter.txt');
+            fs.mkdirSync(folder, { recursive: true });
+            fs.writeFileSync(patch.letterFile, l.text);
+          }
+          summary.tailored++;
+        } else if (o.tailor || o.letter) {
+          summary.skipped++;
+        }
+        updateJob(id, patch);
+      } catch (e) {
+        summary.errors.push(`${name}: ${e.message}`);
+      }
+      summary.done++;
+      sendBatch({ ...summary, step: '' });
+    }
+  } finally {
+    const cancelled = batch.cancel;
+    batch = null;
+    sendBatch({ ...summary, finished: true, cancelled });
+  }
+  return summary;
+});
+handle('batch:cancel', () => { if (batch) batch.cancel = true; return true; });
+handle('path:open', (_e, p) => {
+  // only files ApplyEase wrote itself
+  const job = store.get().jobs.find((j) => j.folder === p || j.cvPdf === p || j.letterFile === p);
+  if (!job) throw new Error('Unknown file');
+  return shell.openPath(p);
+});
+
 handle('cv:pick', async () => {
   const r = await dialog.showOpenDialog(mainWin, {
     title: 'Choose your CV',
@@ -273,7 +450,7 @@ handle('cv:pick', async () => {
 });
 
 handle('cv:import', async (_e, text) => {
-  const fields = await ai.parseCv(store.get(), store.getApiKey(), text);
+  const fields = await ai.parseCv(store.get(), aiConfig(), text);
   return store.update({ profile: { ...fields, cvText: String(text).slice(0, 30000) } });
 });
 
@@ -302,6 +479,8 @@ handle('data:reset', async () => {
   });
   if (response !== 0) return store.publicState();
   store.reset();
+  liveCache = { jobs: [], status: {}, lastViewedAt: '' };
+  saveLive();
   await session.fromPartition('persist:jobsites').clearStorageData();
   return store.publicState();
 });
@@ -314,7 +493,7 @@ handle('tb:init', (e) => {
   const st = store.get();
   return {
     url: ctx.site.webContents.getURL(),
-    aiReady: Boolean(st.settings.aiEnabled && store.getApiKey()),
+    aiReady: Boolean(aiConfig()),
     hasCv: Boolean(st.profile.cvPath && fs.existsSync(st.profile.cvPath))
   };
 });
@@ -365,30 +544,41 @@ handle('tb:answer', async (e) => {
   const ctx = ctxFor(e);
   if (!ctx.questions.length) throw new Error('Press "Fill form" first so I can find the open questions.');
   const st = store.get();
-  const key = store.getApiKey();
+  const cfg = aiConfig();
   const job = jobFromInfo(await pageInfo(ctx));
   const letterQs = ctx.questions.filter((q) => q.isCoverLetter);
   const otherQs = ctx.questions.filter((q) => !q.isCoverLetter);
   const answers = [];
   if (letterQs.length) {
-    const { text } = await ai.coverLetter(st, key, job);
+    // A letter the batch already wrote for this job wins over a new one.
+    const saved = trackedJob(job.url)?.letterFile;
+    const text = saved && fs.existsSync(saved) ? fs.readFileSync(saved, 'utf8') : (await ai.coverLetter(st, cfg, job)).text;
     letterQs.forEach((q) => answers.push({ id: q.id, answer: text }));
   }
-  if (otherQs.length) answers.push(...(await ai.answerQuestions(st, key, job, otherQs.map(({ frame, ...q }) => q))));
+  if (otherQs.length) answers.push(...(await ai.answerQuestions(st, cfg, job, otherQs.map(({ frame, ...q }) => q))));
   let count = 0;
   for (const q of ctx.questions) {
     const mine = answers.filter((a) => a.id === q.id);
     if (!mine.length) continue;
     try { count += await q.frame.executeJavaScript(`(${answerSource})(${JSON.stringify(mine)})`); } catch { /* frame gone */ }
   }
-  const usedAi = Boolean(st.settings.aiEnabled && key);
+  const usedAi = Boolean(cfg);
   const warnings = usedAi ? answers.flatMap((a) => checkWriting(a.answer).issues) : [];
   return { count, total: ctx.questions.length, usedAi, warnings: [...new Set(warnings)] };
 });
 
+// The tracker entry for the job on this page (apply pages often add /apply or a query).
+function trackedJob(url) {
+  const bare = (u) => String(u || '').split(/[?#]/)[0].replace(/\/(apply|application)\/?$/i, '').replace(/\/+$/, '').toLowerCase();
+  const b = bare(url);
+  if (!b) return null;
+  return store.get().jobs.find((j) => j.url && (bare(j.url) === b || b.startsWith(bare(j.url) + '/'))) || null;
+}
+
 handle('tb:attachCv', async (e) => {
   const ctx = ctxFor(e);
-  const cvPath = store.get().profile.cvPath;
+  const tailored = trackedJob(ctx.site.webContents.getURL())?.cvPdf;
+  const cvPath = tailored && fs.existsSync(tailored) ? tailored : store.get().profile.cvPath;
   if (!cvPath || !fs.existsSync(cvPath)) throw new Error('Add your CV in the Profile tab first.');
   const host = hostOf(ctx.site.webContents.getURL());
   if (!(await askSitePermission(ctx, host))) return { cancelled: true };
@@ -416,7 +606,7 @@ handle('tb:attachCv', async (e) => {
   } finally {
     if (!wasAttached) dbg.detach();
   }
-  return { file: path.basename(cvPath) };
+  return { file: path.basename(cvPath), tailored: cvPath === tailored };
 });
 
 handle('tb:save', async (e, status) => {
@@ -441,7 +631,7 @@ handle('tb:save', async (e, status) => {
   }
   store.update({ jobs });
   notifyMain();
-  return { company: meta.company, role: meta.role, updated: Boolean(existing) };
+  return { company: meta.company, role: meta.role, location: meta.location, updated: Boolean(existing) };
 });
 
 // ---------- App lifecycle ----------
@@ -464,6 +654,11 @@ app.whenReady().then(() => {
   ]));
 
   createMainWindow();
+  // Fresh jobs every time the app opens, then every N minutes while it's open.
+  if (!process.env.APPLYEASE_TEST) {
+    mainWin.webContents.once('did-finish-load', () => refreshLive(true).catch(() => {}));
+    scheduleLive();
+  }
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createMainWindow(); });
 });
 

@@ -25,7 +25,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node test/fit.test.js && node test/ai.test.js && node test/discover.test.js
+      - run: node test/fit.test.js && node test/ai.test.js && node test/discover.test.js && node test/feeds.test.js
       - name: End-to-end test (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a npx electron --no-sandbox test/e2e.js

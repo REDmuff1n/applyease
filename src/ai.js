@@ -1,29 +1,8 @@
-// Cover letters, answers, AI fit scores and tailored CVs. Uses Claude when the
-// user adds their own API key, otherwise falls back to templates where it can.
+// Cover letters, answers, AI fit scores and tailored CVs. Uses the AI provider the
+// user picked in Settings (cfg), otherwise falls back to templates where it can.
+// cfg = { provider, apiKey, model, baseUrl } or null when AI is off.
 const { checkWriting } = require('./quality');
-
-async function callClaude({ apiKey, model, system, prompt, maxTokens = 1200 }) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: 'user', content: prompt }]
-    })
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const msg = body?.error?.message || res.statusText;
-    throw new Error(`Claude API error (${res.status}): ${msg}`);
-  }
-  return (body.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
-}
+const { chat } = require('./llm');
 
 function profileBlock(state) {
   const p = state.profile;
@@ -49,16 +28,16 @@ function profileBlock(state) {
 // Everything the applicant wrote themselves: used to spot invented numbers.
 function sourceMaterial(state) {
   const p = state.profile;
-  return [p.summary, p.skills, p.headline, p.cvText, p.coverLetterBase, p.gpa, p.yearsExperience, ...(state.answers || []).map((a) => a.a)].filter(Boolean).join('\n');
+  return [p.summary, p.skills, p.headline, p.cvText, p.coverLetterBase, p.gpa, p.yearsExperience, p.phone, p.postcode, p.gradYear, p.address, ...(state.answers || []).map((a) => a.a)].filter(Boolean).join('\n');
 }
 
-// Ask Claude, check the result, and retry once with the problems spelled out.
-async function writeChecked({ apiKey, model, system, prompt, maxTokens, source, minWords, render = (x) => x }) {
-  let raw = await callClaude({ apiKey, model, system, prompt, maxTokens });
+// Ask the AI, check the result, and retry once with the problems spelled out.
+async function writeChecked({ cfg, system, prompt, maxTokens, source, minWords, render = (x) => x }) {
+  let raw = await chat(cfg, { system, prompt, maxTokens });
   let check = checkWriting(render(raw), { source, minWords });
   if (!check.ok) {
     const retry = `${prompt}\n\nYour previous draft had these problems, fix all of them:\n- ${check.issues.join('\n- ')}`;
-    raw = await callClaude({ apiKey, model, system, prompt: retry, maxTokens });
+    raw = await chat(cfg, { system, prompt: retry, maxTokens });
     check = checkWriting(render(raw), { source, minWords });
   }
   return { raw, issues: check.issues };
@@ -97,21 +76,21 @@ ${name}
 ${[p.email, p.phone].filter(Boolean).join(' | ')}`;
 }
 
-async function coverLetter(state, apiKey, job) {
-  if (!state.settings.aiEnabled || !apiKey) return { text: templateLetter(state, job), source: 'template' };
+async function coverLetter(state, cfg, job) {
+  if (!cfg) return { text: templateLetter(state, job), source: 'template' };
   const prompt = `APPLICANT PROFILE\n${profileBlock(state)}\n\nJOB\nCompany: ${job.company || 'unknown'}\nRole: ${job.role || 'unknown'}\nDescription:\n${String(job.text || '').slice(0, 9000)}\n\nWrite a cover letter of 180-260 words tailored to this job. Connect 2-3 concrete things from the profile to the job's needs. End with the applicant's name.`;
-  const { raw, issues } = await writeChecked({ apiKey, model: state.settings.model, system: SYSTEM, prompt, source: sourceMaterial(state), minWords: 120 });
-  return { text: raw, source: 'claude', issues };
+  const { raw, issues } = await writeChecked({ cfg, system: SYSTEM, prompt, source: sourceMaterial(state), minWords: 120 });
+  return { text: raw, source: 'ai', issues };
 }
 
 // Answer open questions found on an application form.
-async function answerQuestions(state, apiKey, job, questions) {
+async function answerQuestions(state, cfg, job, questions) {
   if (!questions.length) return [];
-  if (!state.settings.aiEnabled || !apiKey) {
+  if (!cfg) {
     return questions.map((q) => ({ id: q.id, answer: matchSaved(state, q.label) }));
   }
   const prompt = `APPLICANT PROFILE\n${profileBlock(state)}\n\nJOB PAGE (may be partial)\n${String(job.text || '').slice(0, 6000)}\n\nAnswer each application-form question below in 40-120 words (shorter if the question clearly wants a short answer). Return ONLY JSON: an array of {"id": string, "answer": string} in the same order.\n\nQUESTIONS\n${JSON.stringify(questions.map((q) => ({ id: q.id, question: q.label, maxLength: q.maxLength || null })))}`;
-  const raw = await callClaude({ apiKey, model: state.settings.model, system: SYSTEM, prompt, maxTokens: 2500 });
+  const raw = await chat(cfg, { system: SYSTEM, prompt, maxTokens: 2500 });
   const json = raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1);
   try { return JSON.parse(json); } catch { throw new Error('Could not read the AI answer. Try again.'); }
 }
@@ -130,11 +109,11 @@ function matchSaved(state, label) {
   return best.a;
 }
 
-async function parseCv(state, apiKey, cvText) {
-  if (!apiKey) throw new Error('Add your Claude API key in Settings to import from a CV.');
+async function parseCv(state, cfg, cvText) {
+  if (!cfg) throw new Error('Turn on AI in Settings to import from a CV.');
   const keys = ['firstName', 'lastName', 'email', 'phone', 'address', 'city', 'postcode', 'country', 'linkedin', 'website', 'university', 'degree', 'major', 'gradYear', 'gpa', 'headline', 'summary', 'skills', 'languages'];
   const prompt = `Extract the applicant's details from this CV. Return ONLY a JSON object with these string keys (empty string if unknown): ${keys.join(', ')}.\n"summary" = 3-5 lines describing their experience. "skills" and "languages" = comma-separated.\n\nCV:\n${String(cvText).slice(0, 15000)}`;
-  const raw = await callClaude({ apiKey, model: state.settings.model, system: 'You extract structured data. Output JSON only.', prompt, maxTokens: 1500 });
+  const raw = await chat(cfg, { system: 'You extract structured data. Output JSON only.', prompt, maxTokens: 1500 });
   const obj = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
   const out = {};
   for (const k of keys) if (typeof obj[k] === 'string') out[k] = obj[k];
@@ -149,8 +128,8 @@ function parseJson(raw) {
 }
 
 // AI fit score (1-10) with the reasons, next to the offline rule-based score.
-async function aiFit(state, apiKey, job) {
-  if (!apiKey) throw new Error('Add your Claude API key in Settings to get an AI score.');
+async function aiFit(state, cfg, job) {
+  if (!cfg) throw new Error('Turn on AI in Settings to get an AI score.');
   const pr = state.preferences || {};
   const prompt = `APPLICANT PROFILE\n${profileBlock(state)}\n\nWHAT THEY WANT\nRoles: ${pr.targetRoles || '-'}\nPlaces: ${pr.locations || '-'}\nAvoid: ${pr.avoidKeywords || '-'}\nPaid only: ${pr.paidOnly ? 'yes' : 'no'}\n\nJOB\nCompany: ${job.company || 'unknown'}\nRole: ${job.role || 'unknown'}\n${String(job.text || '').slice(0, 9000)}
 
@@ -158,7 +137,7 @@ Score how well this applicant fits this job and how likely they are to get an in
 9-10 = meets nearly every requirement; 7-8 = most requirements, small gaps; 5-6 = some relevant skills but key gaps; 3-4 = big gaps; 1-2 = different field or level.
 Be realistic about seniority, years of experience, required languages, location and work permit.
 Return ONLY JSON: {"score": 1-10, "matches": [up to 6 short strengths], "gaps": [up to 5 short gaps], "keywords": [up to 10 words from the job ad worth mirroring in the CV], "reasoning": "2 sentences"}`;
-  const raw = await callClaude({ apiKey, model: state.settings.model, system: 'You are a realistic recruiter. Output JSON only.', prompt, maxTokens: 900 });
+  const raw = await chat(cfg, { system: 'You are a realistic recruiter. Output JSON only.', prompt, maxTokens: 900 });
   const o = parseJson(raw);
   const arr = (x) => (Array.isArray(x) ? x.map(String).slice(0, 10) : []);
   return { score: Math.max(1, Math.min(10, Math.round(Number(o.score) || 1))), matches: arr(o.matches), gaps: arr(o.gaps), keywords: arr(o.keywords), reasoning: String(o.reasoning || '') };
@@ -179,8 +158,8 @@ function cvToText(cv) {
 }
 
 // Rewrites the applicant's CV for one job: reorders and rewords, never invents.
-async function tailorCv(state, apiKey, job) {
-  if (!apiKey) throw new Error('Add your Claude API key in Settings to tailor your CV.');
+async function tailorCv(state, cfg, job) {
+  if (!cfg) throw new Error('Turn on AI in Settings to tailor your CV.');
   const p = state.profile;
   if (!p.cvText && !p.summary) throw new Error('Paste your CV text in Profile & CV first (the "CV text" box).');
   const prompt = `APPLICANT PROFILE\n${profileBlock(state)}\n\nJOB\nCompany: ${job.company || 'unknown'}\nRole: ${job.role || 'unknown'}\n${String(job.text || '').slice(0, 8000)}
@@ -197,14 +176,15 @@ Return ONLY JSON: {"headline": "", "summary": "", "skills": [""], "sections": [{
     name: `${p.firstName} ${p.lastName}`.trim(),
     contact: [p.email, p.phone, [p.city, p.country].filter(Boolean).join(', '), p.linkedin, p.github || p.website].filter(Boolean).join(' | ')
   };
-  const render = (raw) => { try { return cvToText({ ...parseJson(raw), ...header }); } catch { return raw; } };
-  const { raw, issues } = await writeChecked({ apiKey, model: state.settings.model, system: SYSTEM + '\nOutput JSON only.', prompt, maxTokens: 3000, source: sourceMaterial(state), render });
+  // Check only what the AI wrote: the name and contact line come from the profile.
+  const render = (raw) => { try { return cvToText({ ...parseJson(raw), name: '', contact: '' }); } catch { return raw; } };
+  const { raw, issues } = await writeChecked({ cfg, system: SYSTEM + '\nOutput JSON only.', prompt, maxTokens: 3000, source: sourceMaterial(state), render });
   const cv = { ...parseJson(raw), ...header }; // name and contact always come from the profile, never the AI
   return { cv, text: cvToText(cv), issues };
 }
 
-async function testKey(apiKey, model) {
-  await callClaude({ apiKey, model, system: 'Reply with OK.', prompt: 'ping', maxTokens: 5 });
+async function testKey(cfg) {
+  await chat(cfg, { system: 'Reply with OK.', prompt: 'Reply with the word OK.', maxTokens: 20 });
   return true;
 }
 

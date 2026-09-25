@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { app, safeStorage } = require('electron');
+const { needsKey } = require('./llm');
 
 const DEFAULTS = {
   profile: {
@@ -35,11 +36,20 @@ const DEFAULTS = {
   jobs: [],
   settings: {
     aiEnabled: false,
+    aiProvider: 'anthropic',
     model: 'claude-sonnet-5',
-    apiKeyEnc: '',
-    apiKeyPlain: '',
+    baseUrl: '', // only for local servers and custom providers
+    secretsEnc: {}, // API keys by name ("ai:openai", "feed:jsearch"…), encrypted
+    secretsPlain: {}, // fallback when the OS keychain is unavailable
     allowedSites: [],
-    overwriteFilled: false
+    overwriteFilled: false,
+    batch: { aiScore: true, tailor: true, letter: true, minScore: 7 }
+  },
+  feeds: {
+    arbeitnow: true, himalayas: true, remotive: true, remoteok: false, themuse: true, boards: true,
+    adzuna: false, adzunaAppId: '', adzunaCountry: 'gb',
+    jooble: false, jsearch: false,
+    maxAgeDays: 7, autoRefreshMins: 30
   },
   onboarded: false
 };
@@ -54,6 +64,14 @@ function load() {
     data = deepMerge(structuredClone(DEFAULTS), raw);
   } catch {
     data = structuredClone(DEFAULTS);
+  }
+  // 1.0/1.1 kept a single Claude key: move it to the per-provider store.
+  const s = data.settings;
+  if (s.apiKeyEnc || s.apiKeyPlain) {
+    if (s.apiKeyEnc) s.secretsEnc['ai:anthropic'] = s.apiKeyEnc;
+    if (s.apiKeyPlain) s.secretsPlain['ai:anthropic'] = s.apiKeyPlain;
+    delete s.apiKeyEnc;
+    delete s.apiKeyPlain;
   }
   return data;
 }
@@ -78,21 +96,22 @@ function save() {
 
 function get() { return data; }
 
-// What the UI is allowed to see: everything except the raw API key.
+// What the UI is allowed to see: everything except the raw API keys.
 function publicState() {
   const s = structuredClone(data);
+  const names = [...Object.keys(data.settings.secretsEnc || {}), ...Object.keys(data.settings.secretsPlain || {})];
+  s.settings.secretsSet = Object.fromEntries(names.filter((n) => getSecret(n)).map((n) => [n, true]));
   s.settings.hasApiKey = Boolean(getApiKey());
-  delete s.settings.apiKeyEnc;
-  delete s.settings.apiKeyPlain;
+  s.settings.aiReady = Boolean(data.settings.aiEnabled && data.settings.model && (s.settings.hasApiKey || !needsKey(data.settings.aiProvider)));
+  delete s.settings.secretsEnc;
+  delete s.settings.secretsPlain;
   return s;
 }
 
 function update(partial) {
   const clean = structuredClone(partial);
   if (clean.settings) {
-    delete clean.settings.apiKeyEnc;
-    delete clean.settings.apiKeyPlain;
-    delete clean.settings.hasApiKey;
+    for (const k of ['secretsEnc', 'secretsPlain', 'secretsSet', 'hasApiKey', 'apiKeyEnc', 'apiKeyPlain']) delete clean.settings[k];
   }
   deepMerge(data, clean);
   // arrays are replaced wholesale by deepMerge, which is what we want
@@ -100,31 +119,34 @@ function update(partial) {
   return publicState();
 }
 
-function setApiKey(key) {
-  key = (key || '').trim();
-  if (!key) {
-    data.settings.apiKeyEnc = '';
-    data.settings.apiKeyPlain = '';
-  } else if (safeStorage.isEncryptionAvailable()) {
-    data.settings.apiKeyEnc = safeStorage.encryptString(key).toString('base64');
-    data.settings.apiKeyPlain = '';
-  } else {
-    data.settings.apiKeyPlain = key; // OS keychain unavailable (some Linux setups)
-    data.settings.apiKeyEnc = '';
+// API keys (AI providers and job sources), encrypted with the OS keychain.
+function setSecret(name, value) {
+  value = String(value || '').trim();
+  const s = data.settings;
+  delete s.secretsEnc[name];
+  delete s.secretsPlain[name];
+  if (value) {
+    if (safeStorage.isEncryptionAvailable()) s.secretsEnc[name] = safeStorage.encryptString(value).toString('base64');
+    else s.secretsPlain[name] = value; // OS keychain unavailable (some Linux setups)
   }
   save();
 }
 
-function getApiKey() {
-  if (data.settings.apiKeyEnc) {
-    try { return safeStorage.decryptString(Buffer.from(data.settings.apiKeyEnc, 'base64')); } catch { return ''; }
+function getSecret(name) {
+  const enc = data.settings.secretsEnc?.[name];
+  if (enc) {
+    try { return safeStorage.decryptString(Buffer.from(enc, 'base64')); } catch { return ''; }
   }
-  return data.settings.apiKeyPlain || '';
+  return data.settings.secretsPlain?.[name] || '';
 }
+
+// Key for the AI provider currently picked in Settings.
+const setApiKey = (key, provider = data.settings.aiProvider) => setSecret('ai:' + provider, key);
+const getApiKey = (provider = data.settings.aiProvider) => getSecret('ai:' + provider);
 
 function reset() {
   data = structuredClone(DEFAULTS);
   save();
 }
 
-module.exports = { load, save, get, update, publicState, setApiKey, getApiKey, reset, filePath: () => file };
+module.exports = { load, save, get, update, publicState, setApiKey, getApiKey, setSecret, getSecret, reset, filePath: () => file };

@@ -1,11 +1,11 @@
 {
   "name": "applyease",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Fill job applications in seconds: profile autofill, CV upload, fit check, cover letters and a tracker.",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node test/fit.test.js && node test/ai.test.js && node test/discover.test.js && electron test/e2e.js",
+    "test": "node test/fit.test.js && node test/ai.test.js && node test/discover.test.js && node test/feeds.test.js && electron test/e2e.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",

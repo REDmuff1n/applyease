@@ -47,14 +47,14 @@ $('cv').onclick = () => run('cv', async () => {
   status('Attaching CV…');
   const r = await tb.attachCv();
   if (r.cancelled) return status('Cancelled.');
-  status(`Attached ${r.file}. Check the site shows it.`, 'ok');
+  status(`Attached ${r.tailored ? 'your tailored CV ' : ''}${r.file}. Check the site shows it.`, 'ok');
 });
 
 $('answer').onclick = () => run('answer', async () => {
   status('Writing answers…');
   const r = await tb.answer();
   const warn = r.warnings?.length ? ` Check: ${r.warnings.join('; ')}` : '';
-  status(`Wrote ${r.count} of ${r.total} answers (blue)${r.usedAi ? ' with Claude' : ' from your saved answers'}. Read them before you submit.${warn}`, r.count && !warn ? 'ok' : '');
+  status(`Wrote ${r.count} of ${r.total} answers (blue)${r.usedAi ? ' with AI' : ' from your saved answers'}. Read them before you submit.${warn}`, r.count && !warn ? 'ok' : '');
 });
 
 $('applied').onclick = () => run('applied', async () => {
@@ -70,6 +70,6 @@ $('later').onclick = () => run('later', async () => {
 tb.init().then((d) => {
   $('url').value = d.url || '';
   if (!d.hasCv) $('cv').title = 'Add your CV in the Profile tab to use this';
-  if (!d.aiReady) $('answer').title = 'Uses your saved answers. Add a Claude API key in Settings for tailored answers.';
+  if (!d.aiReady) $('answer').title = 'Uses your saved answers. Turn on AI in Settings for tailored answers.';
   if (!d.url) $('url').focus();
 });

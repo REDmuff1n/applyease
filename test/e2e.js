@@ -10,7 +10,20 @@ const assert = require('assert');
 process.env.APPLYEASE_TEST = '1';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'applyease-'));
 app.setPath('userData', tmp);
+app.setPath('documents', tmp); // batch output goes to Documents/ApplyEase
 const shots = process.env.SHOTS_DIR;
+
+// A cached Live jobs list (the real feeds aren't called in tests).
+const hoursAgo = (h) => new Date(Date.now() - h * 36e5).toISOString();
+fs.writeFileSync(path.join(tmp, 'live-jobs.json'), JSON.stringify({
+  fetchedAt: hoursAgo(0.2), lastViewedAt: hoursAgo(5),
+  status: { arbeitnow: { ok: true, count: 3 }, jsearch: { ok: false, error: 'add your RapidAPI key in Settings' } },
+  jobs: [
+    { id: 'an-1', source: 'arbeitnow', role: 'Finance Intern', company: 'Deutsche Bank', location: 'Remote', url: 'https://example.com/an-1', posted: hoursAgo(2), firstSeen: hoursAgo(1), text: 'Paid internship. Excel. Fluent English.' },
+    { id: 'an-2', source: 'arbeitnow', role: 'Junior Financial Analyst', company: 'OTP Bank', location: 'Budapest', url: 'https://example.com/an-2', posted: hoursAgo(30), firstSeen: hoursAgo(20), text: 'Entry-level analyst, salary in HUF.' },
+    { id: 'an-3', source: 'arbeitnow', role: 'Senior Backend Engineer', company: 'Other', location: 'Berlin', url: 'https://example.com/an-3', posted: hoursAgo(3), firstSeen: hoursAgo(1), text: '7+ years of experience.' }
+  ]
+}));
 
 const cv = path.join(tmp, 'Test_CV.pdf');
 fs.writeFileSync(cv, '%PDF-1.4 test');
@@ -27,6 +40,7 @@ fs.writeFileSync(path.join(tmp, 'applyease-data.json'), JSON.stringify({
   answers: [{ q: 'Why do you want to work here', a: 'Because I want hands-on experience in financial analysis.' }],
   preferences: { targetRoles: 'analyst, finance', locations: 'Budapest, Remote', avoidKeywords: '', paidOnly: true },
   settings: { allowedSites: ['127.0.0.1'] },
+  feeds: { jsearch: true },
   jobs: [
     { id: 'a1', company: 'Wise', role: 'Business Analyst Intern', status: 'Interview', dateApplied: '2026-09-20', fit: 82, url: 'https://example.com', notes: 'Call on Monday' },
     { id: 'a2', company: 'BlackRock', role: 'Finance Intern', status: 'Applied', dateApplied: '2026-09-22', fit: 74, url: 'https://example.com', notes: '' },
@@ -35,8 +49,28 @@ fs.writeFileSync(path.join(tmp, 'applyease-data.json'), JSON.stringify({
   onboarded: true
 }));
 
+// Fake OpenAI-compatible AI server, standing in for Ollama / DeepSeek / etc.
+const LETTER = 'Dear Acme Capital team,\n\nI built Excel models for 20+ clients as a freelance designer. ' + 'I study International Business at Corvinus and want to support your analyst team. '.repeat(8) + '\n\nArian Aowsaf';
+function fakeAi(body) {
+  const p = body.messages.map((m) => m.content).join('\n');
+  if (p.includes('Score how well')) return '{"score": 8, "matches": ["Excel"], "gaps": ["No Hungarian"], "keywords": ["modelling"], "reasoning": "Strong student fit."}';
+  if (p.includes('Rewrite the applicant')) return '{"headline":"Finance Intern","summary":"International Business student who builds Excel models.","skills":["Excel","Python"],"sections":[{"title":"Experience","items":[{"heading":"Freelance designer","sub":"Budapest","bullets":["Delivered work for 20+ clients"]}]}]}';
+  if (p.includes('QUESTIONS')) {
+    const qs = JSON.parse(p.slice(p.indexOf('[', p.indexOf('QUESTIONS')), p.lastIndexOf(']') + 1));
+    return JSON.stringify(qs.map((q) => ({ id: q.id, answer: 'Because I want hands-on experience in financial analysis.' })));
+  }
+  return LETTER;
+}
+
 const server = http.createServer((req, res) => {
-  if (req.url === '/frame.html') {
+  if (req.url === '/v1/chat/completions') {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { content: fakeAi(JSON.parse(raw)) } }] }));
+    });
+  } else if (req.url === '/frame.html') {
     res.end('<!doctype html><body style="font-family:sans-serif"><label for="c">City</label><input id="c"><label for="z">Postal code</label><input id="z"></body>');
   } else {
     res.setHeader('content-type', 'text/html');
@@ -59,13 +93,46 @@ app.whenReady().then(async () => {
     const url = `http://127.0.0.1:${server.address().port}/apply`;
     await wait(1500);
     const main = BrowserWindow.getAllWindows()[0];
-    for (const tab of ['home', 'profile', 'find', 'check', 'tracker', 'settings']) {
-      await main.webContents.executeJavaScript(`document.querySelector('[data-tab=${tab}]').click()`);
+    const ui = (code) => main.webContents.executeJavaScript(code);
+
+    // Live jobs: badge counts new jobs matching the preferences; filters work.
+    assert.strictEqual(await ui('document.querySelector("#liveCount").textContent'), '1', 'one new matching job (the senior one does not match)');
+    await ui(`document.querySelector('[data-tab=live]').click()`);
+    await wait(400);
+    assert.strictEqual(await ui('document.querySelectorAll("#liveList tbody tr").length'), 2, 'only my roles & places');
+    assert(await ui('+document.querySelector("#liveList .pill").textContent > 50'), 'fit uses title and place too');
+    assert(await ui('document.body.innerText.includes("add your RapidAPI key")'), 'source problems shown');
+    await ui(`(() => { const s = document.querySelector('#liveAge'); s.value = '1'; s.dispatchEvent(new Event('change')); })()`);
+    await wait(100);
+    assert.strictEqual(await ui('document.querySelectorAll("#liveList tbody tr").length'), 1, 'last 24 hours');
+    await snap(main.webContents, 'main-live.png');
+
+    const { openJobWindow, store } = global.__applyease;
+    // AI through an OpenAI-compatible server (what Ollama, DeepSeek, Groq… use)
+    store.update({ settings: { aiEnabled: true, aiProvider: 'custom', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'fake-model' } });
+    for (const tab of ['home', 'profile', 'find', 'check', 'settings']) {
+      await ui(`document.querySelector('[data-tab=${tab}]').click()`);
       await wait(300);
       await snap(main.webContents, `main-${tab}.png`);
     }
+    assert.strictEqual(await ui('document.querySelector("#liveCount").textContent'), '', 'leaving Live jobs marks them seen');
+    await ui('api.testApiKey()');
 
-    const { openJobWindow, store } = global.__applyease;
+    // Batch: score + tailor + letter for a saved job
+    store.update({ jobs: [{ id: 'b1', company: 'Acme Capital', role: 'Junior Financial Analyst Intern', status: 'Saved', url, fit: '', notes: '' }, ...store.get().jobs] });
+    const sum = await ui(`api.batchRun({ ids: ['b1'], aiScore: true, tailor: true, letter: true, minScore: 7 })`);
+    console.log('batch', JSON.stringify(sum));
+    const b1 = store.get().jobs.find((j) => j.id === 'b1');
+    assert.strictEqual(b1.aiScore, 8);
+    assert(fs.existsSync(b1.cvPdf) && fs.readFileSync(b1.cvPdf).subarray(0, 5).toString() === '%PDF-', 'tailored PDF written');
+    assert(b1.cvPdf.startsWith(path.join(tmp, 'ApplyEase')), b1.cvPdf);
+    assert.strictEqual(fs.readFileSync(b1.letterFile, 'utf8'), LETTER);
+    await ui(`document.querySelector('[data-tab=tracker]').click()`);
+    await wait(300);
+    assert(await ui('!!document.querySelector("tr[data-id=b1] .folder")'), 'folder button shown');
+    assert.strictEqual(b1.notes || '', '', 'no false alarms from the CV check (e.g. the phone number)');
+    await snap(main.webContents, 'main-tracker.png');
+
     const ctx = openJobWindow(url);
     await new Promise((r) => ctx.site.webContents.once('did-finish-load', r));
     await wait(800);
@@ -97,14 +164,16 @@ app.whenReady().then(async () => {
     assert.strictEqual(await frame.executeJavaScript('document.querySelector("#c").value'), 'Budapest', 'iframe field filled');
 
     const att = await tb('tb.attachCv()');
-    assert.strictEqual(att.file, 'Test_CV.pdf');
-    assert.strictEqual(await ctx.site.webContents.executeJavaScript('document.querySelector("#cvf").files[0]?.name'), 'Test_CV.pdf');
+    assert.strictEqual(att.tailored, true, 'the tailored CV from the batch is attached');
+    assert.strictEqual(att.file, 'Arian_Aowsaf_CV.pdf');
+    assert.strictEqual(await ctx.site.webContents.executeJavaScript('document.querySelector("#cvf").files[0]?.name'), 'Arian_Aowsaf_CV.pdf');
 
     const ans = await tb('tb.answer()');
     console.log('answers', JSON.stringify(ans));
     assert.strictEqual(await v('#why'), 'Because I want hands-on experience in financial analysis.');
     const letter = await v('#cl');
-    assert(letter.includes('Acme') && letter.includes('Arian Aowsaf'), 'cover letter from template: ' + letter.slice(0, 120));
+    assert.strictEqual(letter, LETTER, 'the letter the batch wrote is reused');
+    assert.strictEqual(ans.usedAi, true);
 
     await tb(`document.getElementById('status').textContent = 'Filled 11 fields (green) · CV attached · 2 answers written (blue). Read them, then press Submit.'; document.getElementById('status').className='ok'`);
     await wait(300);
@@ -114,10 +183,11 @@ app.whenReady().then(async () => {
     const saved = await tb('tb.save("Applied")');
     console.log('saved', JSON.stringify(saved));
     const jobs = store.get().jobs;
-    assert.strictEqual(jobs.length, 4);
-    assert.strictEqual(jobs[0].status, 'Applied');
-    assert.strictEqual(jobs[0].company, 'Acme Capital', 'company from JSON-LD');
-    assert.strictEqual(jobs[0].location, 'Budapest, Hungary', 'location from JSON-LD');
+    assert.strictEqual(jobs.length, 4, 'existing tracker entry updated, not duplicated');
+    assert.strictEqual(saved.updated, true);
+    assert.strictEqual(jobs.find((j) => j.id === 'b1').status, 'Applied');
+    assert.strictEqual(saved.company, 'Acme Capital', 'company from JSON-LD');
+    assert.strictEqual(saved.location, 'Budapest, Hungary', 'location from JSON-LD');
 
     const title = await ctx.site.webContents.executeJavaScript('document.title');
     assert.notStrictEqual(title, 'SUBMITTED', 'app must never submit');
