@@ -147,12 +147,14 @@ app.whenReady().then(async () => {
     const { openJobWindow, store } = global.__applyease;
     // AI through an OpenAI-compatible server (what Ollama, DeepSeek, Groq… use)
     store.update({ settings: { aiEnabled: true, aiProvider: 'custom', baseUrl: `http://127.0.0.1:${server.address().port}/v1`, model: 'fake-model' } });
-    for (const tab of ['home', 'profile', 'find', 'check', 'settings']) {
+    for (const tab of ['home', 'profile', 'check', 'settings']) {
       await ui(`document.querySelector('[data-tab=${tab}]').click()`);
       await wait(300);
       await snap(main.webContents, `main-${tab}.png`);
     }
     assert.strictEqual(await ui('document.querySelector("#liveCount").textContent'), '', 'leaving Live jobs marks them seen');
+    assert.strictEqual(await ui('document.querySelectorAll("[data-tab=find]").length'), 0, 'Find jobs merged into Live jobs');
+    assert(await ui('!!document.querySelector("#boardsSource #boards") && !!document.querySelector("#saveBoards")'), 'company boards are edited in Settings');
     await ui('api.testApiKey()');
 
     // Batch: score + tailor + letter for a saved job

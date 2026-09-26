@@ -87,7 +87,7 @@ const SOURCES = {
     }
   },
   boards: {
-    label: 'Your company boards', about: 'The career boards you added under Find jobs (Greenhouse, Lever, Ashby, Workable, SmartRecruiters).', minHours: 0.3,
+    label: 'Your company boards', about: 'Every open job at companies you pick. Paste their careers-page links below (Greenhouse, Lever, Ashby, Workable, SmartRecruiters). For big employers add ?country=hu to a SmartRecruiters link to get only one country.', minHours: 0.3,
     async fetch({ fetchFn, state }) {
       if (!String(state.preferences?.boards || '').trim()) return [];
       const r = await discover(state, { boards: state.preferences.boards, keywords: '', locations: '', fetchFn, score: false });

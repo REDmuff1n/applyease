@@ -6,7 +6,6 @@ const { checkFit, guessMeta } = require('./fit');
 const ai = require('./ai');
 const { fillSource, answerSource, infoSource } = require('./autofill');
 const { extractJobPosting, fromPosting, htmlToText, jobText } = require('./jobdata');
-const { discover } = require('./discover');
 const { checkWriting } = require('./quality');
 const llm = require('./llm');
 const feeds = require('./feeds');
@@ -295,10 +294,14 @@ function cvHtml(cv) {
   </body></html>`;
 }
 
-handle('jobs:discover', async (_e, opts) => {
-  const st = store.get();
-  if (opts && typeof opts.boards === 'string') store.update({ preferences: { boards: opts.boards } });
-  return discover(st, { boards: opts?.boards ?? st.preferences.boards, keywords: opts?.keywords, locations: opts?.locations });
+// Company boards changed: save them and fetch right away, without the usual refresh gap.
+handle('live:boards', async (_e, boards) => {
+  const st = store.update({ preferences: { boards: String(boards || '') }, feeds: { boards: true } });
+  const c = loadLive();
+  if (c.status?.boards) { delete c.status.boards.fetchedAt; delete c.status.boards.failedAt; }
+  await refreshLive(true);
+  notifyMain();
+  return { state: st, live: liveView() };
 });
 
 // ---------- Live jobs dashboard ----------

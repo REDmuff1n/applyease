@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   aiFit: (job) => call('fit:ai', job),
   tailorCv: (job) => call('cv:tailor', job),
   saveCvPdf: (cv, job) => call('cv:savePdf', cv, job),
-  discover: (opts) => call('jobs:discover', opts),
+  saveBoards: (boards) => call('live:boards', boards),
   providers: () => call('ai:providers'),
   listModels: () => call('ai:models'),
   setSecret: (name, value) => call('secret:set', name, value),

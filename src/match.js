@@ -1,4 +1,4 @@
-// Does a job match the user's roles and places? Shared by Find jobs and Live jobs.
+// Does a job match the user's roles and places? Used by the Live jobs dashboard.
 
 const listOf = (s) => String(s || '').split(/[,;\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
 

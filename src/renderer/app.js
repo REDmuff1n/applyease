@@ -318,65 +318,6 @@ const aiReady = () => Boolean(S.settings.aiReady);
 const issuesBox = (issues) => (issues?.length
   ? `<div class="issues"><b>Check before sending:</b><ul>${issues.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '');
 
-// ---------------- Find jobs ----------------
-
-let findState = { results: null, errors: [], total: 0, boards: 0, loading: false, filter: true };
-
-PAGES.find = () => {
-  const pr = S.preferences;
-  const f = findState;
-  const rows = f.results || [];
-  return `<div class="page" style="max-width:1100px">
-    <div class="page-head"><h1>Find jobs</h1><p>Search the career boards of companies you like. Results are ranked by how well they fit you.</p></div>
-    <div class="card">
-      <label for="boards">Company career boards (one per line)</label>
-      <textarea id="boards" rows="5" spellcheck="false" placeholder="https://boards.greenhouse.io/company&#10;https://jobs.lever.co/company&#10;https://jobs.ashbyhq.com/company&#10;https://apply.workable.com/company&#10;smartrecruiters:Company">${esc(pr.boards)}</textarea>
-      <p class="small muted" style="margin-top:6px">Works with Greenhouse, Lever, Ashby, Workable and SmartRecruiters: paste the company's careers page link. Uses the boards' official public job APIs.</p>
-      <div class="row" style="margin-top:10px">
-        <label class="switch"><input type="checkbox" id="useFilter" ${f.filter ? 'checked' : ''}> Only roles matching “${esc(pr.targetRoles || 'any')}” in “${esc(pr.locations || 'anywhere')}”</label>
-        <span class="spacer"></span><button id="findGo" class="primary" ${f.loading ? 'disabled' : ''}>${f.loading ? 'Searching…' : 'Search'}</button>
-      </div>
-      ${f.errors.length ? `<div class="issues" style="margin-top:10px"><ul>${f.errors.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
-    </div>
-    ${f.results ? `<div class="card" style="padding:6px 10px">
-      <p class="small muted" style="margin:6px 4px">${rows.length} match${rows.length === 1 ? '' : 'es'} out of ${f.total} open jobs on ${f.boards} board${f.boards === 1 ? '' : 's'}.</p>
-      ${rows.length ? `<table><thead><tr><th style="width:6%">Fit</th><th>Role</th><th style="width:16%">Company</th><th style="width:20%">Location</th><th style="width:10%">Posted</th><th style="width:210px"></th></tr></thead><tbody>
-      ${rows.slice(0, 300).map((j, i) => `<tr data-i="${i}">
-        <td><span class="pill ${j.fit >= 70 ? 'good' : j.fit >= 45 ? 'warn' : 'bad'}" title="${esc(j.verdict)}">${j.fit}</span></td>
-        <td>${esc(j.role)}</td><td>${esc(j.company)}</td><td class="small">${esc(j.location)}</td><td class="small muted">${esc(j.posted)}</td>
-        <td><div class="row" style="flex-wrap:nowrap;gap:4px"><button class="ghost f-check">Check</button><button class="ghost f-save">${S.jobs.some((x) => x.url === j.url) ? 'Saved ✓' : 'Save'}</button><button class="ghost f-open">Apply ↗</button></div></td>
-      </tr>`).join('')}</tbody></table>` : '<div class="empty">No matching jobs. Try turning off the filter or adding more boards.</div>'}
-    </div>` : ''}
-  </div>`;
-};
-BIND.find = (v) => {
-  $('#boards', v).oninput = (e) => { S.preferences.boards = e.target.value; saveSoon(() => ({ preferences: { boards: S.preferences.boards } })); };
-  $('#useFilter', v).onchange = (e) => { findState.filter = e.target.checked; };
-  $('#findGo', v).onclick = () => safe(async () => {
-    const boards = $('#boards', v).value;
-    if (!boards.trim()) return toast('Add at least one career board link');
-    findState.loading = true; render();
-    try {
-      const opts = findState.filter ? { boards } : { boards, keywords: '', locations: '' };
-      findState = { ...findState, ...(await api.discover(opts)) };
-    } finally { findState.loading = false; render(); }
-  });
-  const jobAt = (b) => findState.results[+b.closest('tr').dataset.i];
-  $$('.f-open', v).forEach((b) => { b.onclick = () => safe(() => api.openJob(jobAt(b).url)); });
-  $$('.f-check', v).forEach((b) => { b.onclick = () => safe(async () => {
-    const j = jobAt(b);
-    checkResult = { job: { url: j.url, text: j.text, company: j.company, role: j.role }, fit: await api.checkFit(j.text) };
-    go('check');
-  }); });
-  $$('.f-save', v).forEach((b) => { b.onclick = () => safe(async () => {
-    const j = jobAt(b);
-    if (S.jobs.some((x) => x.url === j.url)) return toast('Already in your tracker');
-    const entry = trackerEntry(j, j.fit);
-    S = await api.update({ jobs: [entry, ...S.jobs] });
-    b.textContent = 'Saved ✓'; updateCounts();
-  }); });
-};
-
 // ---------------- Live jobs ----------------
 
 let LIVE = null; // from api.live()
@@ -403,7 +344,7 @@ function ago(isoStr) {
   return d === 1 ? 'yesterday' : `${d} days ago`;
 }
 
-// Worked out in the main process (src/match.js), same rule as Find jobs.
+// Worked out in the main process (src/match.js).
 const matchesMe = (j) => roleOk(j) && Boolean(j.placeOk);
 
 const isNew = (j) => Boolean(LIVE?.lastViewedAt) && j.firstSeen > LIVE.lastViewedAt;
@@ -519,7 +460,7 @@ PAGES.live = () => {
     <div class="card row" style="gap:8px">
       <span class="small muted">Search the big boards yourself (last 24 h, your roles and city):</span>
       ${LIVE.links.map((l, i) => `<button class="ghost" data-link="${i}">${esc(l.label)} ↗</button>`).join('')}
-      <span class="spacer"></span><button class="ghost" id="liveSources">Sources &amp; keys…</button>
+      <span class="spacer"></span><button class="ghost" id="liveSources">Sources, keys &amp; company boards…</button>
     </div>
     <div class="card filters" style="padding:10px 12px">
       <div class="row" style="gap:8px">
@@ -647,7 +588,7 @@ PAGES.tracker = () => {
         <td><input data-f="notes" value="${esc(j.notes)}" placeholder="—"></td>
         <td><div class="row" style="flex-wrap:nowrap;gap:2px">${j.folder ? `<button class="ghost folder" title="Open tailored CV and letter">📁</button>` : ''}${j.url ? `<button class="ghost open" title="Open in apply window">↗</button>` : ''}<button class="ghost danger del" title="Delete">✕</button></div></td>
       </tr>`).join('')}</tbody></table>`
-    : `<div class="empty">${S.jobs.length ? 'Nothing with this status.' : 'No applications yet. Save jobs from Live jobs or Find jobs, or open a job from Home and press “Mark applied” after you submit.'}</div>`}
+    : `<div class="empty">${S.jobs.length ? 'Nothing with this status.' : 'No applications yet. Save jobs from Live jobs, or open a job from Home and press “Mark applied” after you submit.'}</div>`}
     </div></div>`;
 };
 BIND.tracker = (v) => {
@@ -714,9 +655,11 @@ PAGES.settings = () => {
     </div>
     <div class="card" id="sourcesCard"><h2>Live job sources</h2>
       <p class="small muted">Where the Live jobs page gets listings. Jobs refresh every time you open ApplyEase${f.autoRefreshMins ? ` and every ${f.autoRefreshMins} minutes while it's open` : ''}. LinkedIn, Indeed and Glassdoor don't allow scraping, so their listings come through JSearch (Google for Jobs) with a free key. You can also open their own search from the Live jobs page.</p>
-      <div class="sources">${Object.entries(src).map(([id, x]) => `<div class="source">
+      <div class="sources">${Object.entries(src).map(([id, x]) => `<div class="source ${id === 'boards' ? 'wide' : ''}" ${id === 'boards' ? 'id="boardsSource"' : ''}>
         <label class="switch"><input type="checkbox" data-feed="${id}" ${f[id] ? 'checked' : ''}> <b>${esc(x.label)}</b></label>
         <p class="small muted">${esc(x.about)} ${x.keyUrl ? `<a href="#" data-url="${esc(x.keyUrl)}">Get a free key ↗</a>` : ''}</p>
+        ${id === 'boards' ? `<textarea id="boards" rows="6" spellcheck="false" placeholder="https://boards.greenhouse.io/company&#10;https://jobs.lever.co/company&#10;https://jobs.ashbyhq.com/company&#10;https://apply.workable.com/company&#10;https://careers.smartrecruiters.com/Company?country=hu">${esc(S.preferences.boards)}</textarea>
+          <div class="row" style="margin-top:6px"><button id="saveBoards" class="primary">Save &amp; load jobs</button><span class="small muted">${listOfWords(String(S.preferences.boards || '').replace(/\n/g, ',')).length} companies</span></div>` : ''}
         ${id === 'adzuna' ? `<div class="row" style="flex-wrap:nowrap;margin-bottom:6px"><input id="adzunaId" placeholder="App ID" value="${esc(f.adzunaAppId)}" style="width:140px">
           <select id="adzunaCountry" style="width:auto">${['gb', 'us', 'de', 'at', 'nl', 'pl', 'fr', 'it', 'es', 'be', 'ch', 'ca', 'au', 'in', 'sg'].map((c) => `<option ${c === f.adzunaCountry ? 'selected' : ''}>${c}</option>`).join('')}</select></div>` : ''}
         ${x.key ? keyRow(x.key, id === 'adzuna' ? 'App key' : 'API key') : ''}
@@ -774,6 +717,16 @@ BIND.settings = (v) => {
   $$('[data-feed]', v).forEach((el) => { el.onchange = () => feedsChanged({ [el.dataset.feed]: el.checked }); });
   $$('[data-url]', v).forEach((a) => { a.onclick = (e) => { e.preventDefault(); api.openLink(a.dataset.url); }; });
   $('#adzunaId', v)?.addEventListener('input', (e) => saveSoon(() => ({ feeds: { adzunaAppId: e.target.value.trim() } })));
+  $('#saveBoards', v)?.addEventListener('click', () => safe(async () => {
+    const b = $('#saveBoards', v); b.disabled = true; b.textContent = 'Loading jobs…';
+    try {
+      const r = await api.saveBoards($('#boards', v).value);
+      S = r.state; LIVE = r.live; updateLiveCount();
+      const n = LIVE.jobs.filter((j) => j.source === 'boards').length;
+      const warn = LIVE.status.boards?.warnings || [];
+      toast(`${n} jobs from your company boards${warn.length ? ` · ${warn.length} link${warn.length === 1 ? '' : 's'} failed, see Live jobs` : ''}`);
+    } finally { render(); }
+  }));
   $('#adzunaCountry', v)?.addEventListener('change', (e) => feedsChanged({ adzunaCountry: e.target.value }));
   $('#maxAge', v).onchange = (e) => feedsChanged({ maxAgeDays: +e.target.value });
   $('#autoRefresh', v).onchange = (e) => feedsChanged({ autoRefreshMins: +e.target.value });

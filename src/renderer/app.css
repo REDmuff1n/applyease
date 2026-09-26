@@ -79,3 +79,4 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .filter-grid select, .filter-grid input { width: 100%; }
 @media (max-width: 900px) { .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .filter-grid .wide { grid-column: 1 / -1; }
+.source.wide { grid-column: 1 / -1; }

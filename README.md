@@ -10,7 +10,7 @@ A desktop app that makes internship and job applications fast. Set up your profi
 It also has:
 
 - **Live jobs**: a dashboard of the newest listings that match your roles and places, refreshed every time you open the app (and every 30 minutes while it's open). New jobs since your last visit get a badge. Sources: Arbeitnow, Himalayas, Remotive, Remote OK, The Muse and your company boards (no key needed), plus Adzuna, Jooble and **JSearch**, which brings in jobs posted on LinkedIn, Indeed and Glassdoor through Google for Jobs (free keys). One click also opens LinkedIn, Indeed or Glassdoor's own search, filtered to the last 24 hours, in the apply window.
-- **Find jobs**: paste the career-board links of companies you like (Greenhouse, Lever, Ashby, Workable, SmartRecruiters). ApplyEase pulls every open role through the boards' official public APIs, filters by your target roles and places, and ranks them by fit. Save them to the tracker or open them to apply.
+- **Company boards**: in Settings → Live job sources, paste the careers-page links of companies you like (Greenhouse, Lever, Ashby, Workable, SmartRecruiters; add `?country=hu` to a SmartRecruiters link for one country). Every open role there appears on the Live jobs dashboard, for as long as the company lists it.
 - **Fit checker**: scores a listing against what you want (roles, city/remote, paid only, language requirements vs. your levels, years of experience asked for). Job pages are read from their structured `JobPosting` data when the site publishes it, so the company, title, location and salary come through cleanly.
 - **Any AI provider**: Claude, ChatGPT, Gemini (free tier), DeepSeek, Groq (free tier, open models), OpenRouter, Mistral, a free model on your own computer with **Ollama** or LM Studio, or any other OpenAI-compatible server. "Load list" shows the models your provider offers.
 - **Score & tailor saved jobs** (Tracker): one button goes through every saved job, gives it an AI score, and for good matches writes a tailored CV (PDF) and cover letter into Documents › ApplyEase. When you open that job later, Attach CV and Write answers use the tailored versions.
@@ -70,7 +70,9 @@ git tag v1.0.0 && git push --tags
 src/main.js            app window, apply window, permissions, IPC
 src/autofill.js        the form-filling script run inside job pages
 src/fit.js             offline job-fit scoring
-src/discover.js        job search on Greenhouse / Lever / Ashby / Workable / SmartRecruiters boards
+src/discover.js        company boards: Greenhouse / Lever / Ashby / Workable / SmartRecruiters APIs
+src/match.js           role / place / job-type matching for the dashboard
+src/site-preload.js    runs in job websites: stops the automatic passkey pop-up
 src/jobdata.js         JSON-LD JobPosting extraction and HTML-to-text
 src/quality.js         clichés, AI leftovers, placeholders and invented-number checks
 src/ai.js              cover letters, answers, AI score, tailored CV (AI or templates)
