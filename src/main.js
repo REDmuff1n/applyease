@@ -10,7 +10,7 @@ const { discover } = require('./discover');
 const { checkWriting } = require('./quality');
 const llm = require('./llm');
 const feeds = require('./feeds');
-const { roleMatch, placeMatch, remoteOpenTo, jobTypes, isSenior, prefsOf } = require('./match');
+const { roleMatch, placeMatch, remoteOpenTo, jobTypes, prefsOf } = require('./match');
 
 app.setName('ApplyEase');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -19,7 +19,13 @@ let mainWin = null;
 const jobWindows = new Map(); // toolbar webContents id -> ctx
 
 const TOOLBAR_H = 96;
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+// A normal Chrome user agent for the real Chromium version inside Electron (without
+// "Electron/x" in it). It must match what the browser reports elsewhere: sign-in pages
+// such as LinkedIn's reject a browser whose version numbers don't agree.
+const UA = `Mozilla/5.0 (${{
+  darwin: 'Macintosh; Intel Mac OS X 10_15_7',
+  linux: 'X11; Linux x86_64'
+}[process.platform] || 'Windows NT 10.0; Win64; x64'}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome.split('.')[0]}.0.0.0 Safari/537.36`;
 
 function createMainWindow() {
   mainWin = new BrowserWindow({
@@ -62,6 +68,12 @@ function normaliseUrl(u) {
 
 // ---------- Job browser window (toolbar + website) ----------
 
+// Websites (job pages and their sign-in pop-ups) share one logged-in session.
+const SITE_PREFS = {
+  partition: 'persist:jobsites', contextIsolation: true, sandbox: true, nodeIntegration: false,
+  preload: path.join(__dirname, 'site-preload.js')
+};
+
 function openJobWindow(url) {
   url = normaliseUrl(url);
   const win = new BaseWindow({ width: 1280, height: 900, title: 'ApplyEase — Apply', backgroundColor: '#ffffff' });
@@ -69,7 +81,7 @@ function openJobWindow(url) {
     webPreferences: { preload: path.join(__dirname, 'toolbar-preload.js'), contextIsolation: true, sandbox: true }
   });
   const site = new WebContentsView({
-    webPreferences: { partition: 'persist:jobsites', contextIsolation: true, sandbox: true, nodeIntegration: false }
+    webPreferences: SITE_PREFS
   });
   win.contentView.addChildView(site);
   win.contentView.addChildView(toolbar);
@@ -87,8 +99,14 @@ function openJobWindow(url) {
 
   toolbar.webContents.loadFile(path.join(__dirname, 'renderer', 'toolbar.html'));
   site.webContents.setUserAgent(UA);
-  site.webContents.setWindowOpenHandler(({ url: u }) => {
-    if (/^https?:/.test(u)) site.webContents.loadURL(u);
+  site.webContents.setWindowOpenHandler(({ url: u, disposition }) => {
+    if (!/^https?:/.test(u)) return { action: 'deny' };
+    // Sign-in pop-ups ("Continue with Microsoft / Apple / Google") must stay real pop-ups:
+    // they report back to the page that opened them, which breaks if we navigate away.
+    if (disposition === 'new-window') {
+      return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, autoHideMenuBar: true, title: 'Sign in', webPreferences: SITE_PREFS } };
+    }
+    site.webContents.loadURL(u); // links that open a new tab stay in this window
     return { action: 'deny' };
   });
   const sendNav = () => {
@@ -322,7 +340,7 @@ function liveView() {
       return {
         ...j, fit: f.score, verdict: f.verdict, types: f.types, roleOk, placeOk,
         remoteOpen: remoteOpenTo(j, prefs.home.map((h) => String(h).toLowerCase())),
-        senior: isSenior(j), mine: roleOk && placeOk
+        mine: roleOk && placeOk
       };
     })
   };
@@ -531,6 +549,12 @@ handle('tb:nav', (e, action, url) => {
   else if (action === 'reload') wc.reload();
   else if (action === 'go' && url) wc.loadURL(normaliseUrl(url));
   return true;
+});
+
+handle('tb:external', (e) => {
+  const url = ctxFor(e).site.webContents.getURL();
+  if (!/^https?:/.test(url)) throw new Error('Open a web page first.');
+  return shell.openExternal(url);
 });
 
 handle('tb:fit', async (e) => {

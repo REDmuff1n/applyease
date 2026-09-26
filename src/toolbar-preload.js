@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('tb', {
   answer: () => call('tb:answer'),
   attachCv: () => call('tb:attachCv'),
   save: (status) => call('tb:save', status),
+  external: () => call('tb:external'),
   onNav: (fn) => ipcRenderer.on('tb:navigated', (_e, d) => fn(d)),
   onStatus: (fn) => ipcRenderer.on('tb:status', (_e, d) => fn(d))
 });

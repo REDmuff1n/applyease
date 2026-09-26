@@ -19,10 +19,20 @@ async function safe(fn) {
   try { return await fn(); } catch (e) { toast(e.message); return undefined; }
 }
 
+// Saves a moment after the last change. Every change made in that moment is kept:
+// the pending partial updates are merged, not replaced by the newest one.
 let saveTimer;
+let savePending = [];
+const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+const mergeInto = (a, b) => { for (const [k, v] of Object.entries(b)) a[k] = isObj(v) && isObj(a[k]) ? mergeInto({ ...a[k] }, v) : v; return a; };
 function saveSoon(partial) {
+  savePending.push(partial);
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => { S = await api.update(partial()); updateCounts(); }, 400);
+  saveTimer = setTimeout(async () => {
+    const merged = savePending.splice(0).reduce((acc, f) => mergeInto(acc, f()), {});
+    S = await api.update(merged);
+    updateCounts();
+  }, 400);
 }
 
 function go(t) {
@@ -374,7 +384,7 @@ let livePage = 0;
 const PER_PAGE = 20;
 
 // Filters live in the saved preferences so they're remembered between sessions.
-const LF_DEFAULT = { q: '', age: 0, source: 'all', sort: 'new', roles: true, place: 'mine', type: 'any', level: 'any', exclude: '', newOnly: false };
+const LF_DEFAULT = { q: '', age: 0, source: 'all', sort: 'new', roles: true, place: 'mine', type: 'any', exclude: '', newOnly: false };
 const LF = () => ({ ...LF_DEFAULT, ...(S.preferences.liveFilters || {}) });
 function setLF(patch) {
   S.preferences.liveFilters = { ...LF(), ...patch };
@@ -394,11 +404,18 @@ function ago(isoStr) {
 }
 
 // Worked out in the main process (src/match.js), same rule as Find jobs.
-const matchesMe = (j) => Boolean(j.mine);
+const matchesMe = (j) => roleOk(j) && Boolean(j.placeOk);
 
 const isNew = (j) => Boolean(LIVE?.lastViewedAt) && j.firstSeen > LIVE.lastViewedAt;
 
 const listOfWords = (s) => String(s || '').split(/[,;\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+// Title contains one of the target roles typed on the page (saved to preferences).
+function roleOk(j) {
+  const roles = listOfWords(S.preferences.targetRoles);
+  const title = String(j.role || '').toLowerCase();
+  return !roles.length || roles.some((r) => title.includes(r));
+}
 
 function placeOk(j, place) {
   const where = String(j.location || '').toLowerCase();
@@ -415,10 +432,9 @@ function liveRows() {
   const since = f.age ? Date.now() - f.age * 864e5 : 0;
   const skip = listOfWords(f.exclude);
   const rows = LIVE.jobs.filter((j) => (f.source === 'all' || j.source === f.source)
-    && (!f.roles || j.roleOk)
+    && (!f.roles || roleOk(j))
     && placeOk(j, f.place)
     && (f.type === 'any' || (j.types || []).includes(f.type))
-    && (f.level === 'any' || !j.senior)
     && (!f.newOnly || isNew(j))
     && (!since || (Date.parse(j.posted || j.firstSeen) || Date.now()) >= since)
     && (!skip.length || !skip.some((w) => String(j.role || '').toLowerCase().includes(w)))
@@ -473,15 +489,18 @@ function pager(page, pages) {
   return `<div class="pager"><button class="ghost" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹ Prev</button>${parts.join('')}<button class="ghost" data-page="${page + 1}" ${page >= pages - 1 ? 'disabled' : ''}>Next ›</button></div>`;
 }
 
-// Place choices: your places, remote, Hungary, then the most common cities in the list.
+// Countries and regions, so the Location list only offers cities.
+const COUNTRY = /^(hungary|germany|deutschland|austria|france|spain|italy|portugal|netherlands|belgium|switzerland|poland|czechia|czech republic|slovakia|romania|bulgaria|croatia|serbia|greece|ireland|united kingdom|uk|england|scotland|denmark|sweden|norway|finland|estonia|latvia|lithuania|ukraine|turkey|cyprus|malta|luxembourg|slovenia|united states|usa|us|canada|mexico|brazil|argentina|colombia|chile|peru|india|pakistan|bangladesh|china|japan|korea|south korea|singapore|philippines|indonesia|malaysia|vietnam|thailand|australia|new zealand|south africa|nigeria|kenya|egypt|israel|uae|united arab emirates|saudi arabia|europe|emea|apac|latam|americas|north america|asia|africa|[a-z]{2})$/i;
+
+// Place choices: your places, remote, then the most common cities in the list.
 function placeOptions() {
   const count = new Map();
   for (const j of LIVE.jobs) {
     const city = String(j.location || '').split(/[,·/;|(]/)[0].trim();
-    if (city && !/remote|anywhere|worldwide/i.test(city) && city.length < 30) count.set(city, (count.get(city) || 0) + 1);
+    if (city && !/remote|anywhere|worldwide/i.test(city) && !COUNTRY.test(city) && city.length < 30) count.set(city, (count.get(city) || 0) + 1);
   }
   const top = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([c]) => c).sort((a, b) => a.localeCompare(b));
-  return [['mine', `My places (${S.preferences.locations || 'anywhere'})`], ['any', 'Anywhere'], ['remote', 'Remote (open to Europe / worldwide)'], ['hungary', 'Hungary'], ...top.map((c) => [c.toLowerCase(), c])];
+  return [['mine', `My places (${S.preferences.locations || 'anywhere'})`], ['any', 'Anywhere'], ['remote', 'Remote (open to Europe / worldwide)'], ...top.map((c) => [c.toLowerCase(), c])];
 }
 
 PAGES.live = () => {
@@ -509,14 +528,14 @@ PAGES.live = () => {
       </div>
       <div class="filter-grid">
         <label>Job type ${sel('liveType', f.type, [['any', 'Any type'], ...Object.entries(TYPE_LABELS)])}</label>
-        <label>Level ${sel('liveLevel', f.level, [['any', 'Any level'], ['entry', 'Student & entry level']])}</label>
         <label>Location ${sel('livePlace', f.place, places)}</label>
         <label>Posted ${sel('liveAge', f.age, [[0, 'Any time'], [1, 'Last 24 hours'], [3, 'Last 3 days'], [7, 'Last 7 days'], [30, 'Last 30 days']])}</label>
         <label>Source ${sel('liveSource', f.source, [['all', 'All sources'], ...enabled.map(([id, s]) => [id, s.label])])}</label>
         <label>Hide titles with <input id="liveExclude" placeholder="e.g. engineer, German" value="${esc(f.exclude)}"></label>
+        <label class="wide">Target roles (comma separated) <input id="liveRolesText" placeholder="e.g. analyst, finance, marketing, intern" value="${esc(S.preferences.targetRoles)}"></label>
       </div>
       <div class="row" style="gap:16px;margin-top:8px">
-        <label class="switch"><input type="checkbox" id="liveRoles" ${f.roles ? 'checked' : ''}> Only my target roles (${esc(S.preferences.targetRoles || 'any')})</label>
+        <label class="switch"><input type="checkbox" id="liveRoles" ${f.roles ? 'checked' : ''}> Only my target roles</label>
         <label class="switch"><input type="checkbox" id="liveNew" ${f.newOnly ? 'checked' : ''}> New only</label>
         <span class="spacer"></span><button class="ghost" id="liveReset">Reset filters</button>
       </div>
@@ -535,18 +554,23 @@ BIND.live = (v) => {
   $('#liveExclude', v).oninput = (e) => change({ exclude: e.target.value });
   $('#liveSort', v).onchange = (e) => change({ sort: e.target.value });
   $('#liveType', v).onchange = (e) => change({ type: e.target.value });
-  $('#liveLevel', v).onchange = (e) => change({ level: e.target.value });
   $('#livePlace', v).onchange = (e) => change({ place: e.target.value });
   $('#liveAge', v).onchange = (e) => change({ age: +e.target.value });
   $('#liveSource', v).onchange = (e) => change({ source: e.target.value });
   $('#liveRoles', v).onchange = (e) => change({ roles: e.target.checked });
+  $('#liveRolesText', v).oninput = (e) => {
+    S.preferences.targetRoles = e.target.value;
+    saveSoon(() => ({ preferences: { targetRoles: S.preferences.targetRoles } }));
+    if (!LF().roles && e.target.value.trim()) { setLF({ roles: true }); $('#liveRoles', v).checked = true; }
+    livePage = 0; $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); updateLiveCount();
+  };
   $('#liveNew', v).onchange = (e) => change({ newOnly: e.target.checked });
   $('#liveReset', v).onclick = () => { setLF(LF_DEFAULT); livePage = 0; render(); };
   bindLiveList(v);
 };
 function bindLiveList(v) {
   const jobAt = (b) => LIVE.jobs.find((j) => j.id === b.closest('tr').dataset.id);
-  $('#liveShowAll', v)?.addEventListener('click', () => { setLF({ q: '', age: 0, source: 'all', roles: false, place: 'any', type: 'any', level: 'any', exclude: '', newOnly: false }); livePage = 0; render(); });
+  $('#liveShowAll', v)?.addEventListener('click', () => { setLF({ q: '', age: 0, source: 'all', roles: false, place: 'any', type: 'any', exclude: '', newOnly: false }); livePage = 0; render(); });
   $$('[data-page]', v).forEach((b) => { b.onclick = () => {
     livePage = +b.dataset.page;
     $('#liveList', v).innerHTML = liveTable(); bindLiveList(v);
@@ -737,8 +761,9 @@ BIND.settings = (v) => {
   }));
   $('#delKey', v)?.addEventListener('click', () => safe(async () => { S = await api.setApiKey(''); render(); }));
   $('#testKey', v).onclick = () => safe(async () => {
-    clearTimeout(saveTimer);
-    S = await api.update({ settings: { model: $('#model', v).value.trim(), ...($('#baseUrl', v) ? { baseUrl: $('#baseUrl', v).value.trim() } : {}) } });
+    clearTimeout(saveTimer); // save now, together with anything still waiting to be saved
+    const pending = savePending.splice(0).reduce((acc, f) => mergeInto(acc, f()), {});
+    S = await api.update(mergeInto(pending, { settings: { model: $('#model', v).value.trim(), ...($('#baseUrl', v) ? { baseUrl: $('#baseUrl', v).value.trim() } : {}) } }));
     const b = $('#testKey', v); b.textContent = 'Testing…'; b.disabled = true;
     try { await api.testApiKey(); toast('Connected ✓'); } finally { b.textContent = 'Test connection'; b.disabled = false; }
   });

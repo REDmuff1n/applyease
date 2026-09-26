@@ -129,10 +129,18 @@ app.whenReady().then(async () => {
     await ui('document.querySelector("#liveShowAll").click()');
     await wait(50);
     assert((await listText()).includes('Showing 1–20 of 33 jobs · page 1 of 2'), 'Show all jobs: ' + (await listText()).slice(0, 80));
-    await ui(`(() => { const s = document.querySelector('#liveLevel'); s.value = 'entry'; s.dispatchEvent(new Event('change')); })()`);
-    assert((await listText()).includes('of 32 jobs matching your filters (33 in total)'), 'entry level hides the senior job');
-    await wait(1200); // filters are saved 0.4 s after the last change
-    assert.strictEqual(global.__applyease.store.get().preferences.liveFilters.level, 'entry', 'filters remembered');
+    const places = await ui('[...document.querySelectorAll("#livePlace option")].map((o) => o.value)');
+    assert(places.includes('budapest') && places.includes('berlin'), 'cities offered: ' + places);
+    assert(!places.includes('hungary') && !places.includes('hu'), 'no countries in the Location list');
+    const typeRoles = (text) => ui(`(() => { const i = document.querySelector('#liveRolesText'); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event('input')); })()`);
+    await typeRoles('backend');
+    assert.strictEqual(await rows(), 1, 'typing target roles filters straight away (and ticks "Only my target roles")');
+    assert(await ui('document.querySelector("#liveRoles").checked'));
+    await wait(1200); // preferences are saved 0.4 s after the last change
+    assert.strictEqual(global.__applyease.store.get().preferences.targetRoles, 'backend', 'target roles saved');
+    assert.strictEqual(global.__applyease.store.get().preferences.liveFilters.roles, true, 'filters remembered');
+    await typeRoles('analyst, finance');
+    await wait(1200);
     await ui('document.querySelector("#liveReset").click()');
     await snap(main.webContents, 'main-live.png');
 
@@ -167,6 +175,11 @@ app.whenReady().then(async () => {
     await wait(800);
     const tb = (code) => ctx.toolbar.webContents.executeJavaScript(code);
 
+    // Sign-in pages check the browser: one consistent Chrome version, no "Electron", no passkey pop-up on load
+    const ua = await ctx.site.webContents.executeJavaScript('navigator.userAgent');
+    assert(ua.includes(`Chrome/${process.versions.chrome.split('.')[0]}.0.0.0`) && !/Electron|applyease/i.test(ua), ua);
+    assert(await ctx.site.webContents.executeJavaScript('!/native code/.test(String(navigator.credentials.get))'), 'passkey autofill request is handled');
+    assert.strictEqual(await ctx.site.webContents.executeJavaScript('typeof require'), 'undefined', 'websites get nothing from the app');
     const fit = await tb('tb.fit()');
     console.log('fit', fit.score, fit.verdict);
     assert(fit.score >= 70, 'fake listing should be a strong fit');

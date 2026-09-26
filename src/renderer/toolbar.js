@@ -29,6 +29,7 @@ $('back').onclick = () => tb.nav('back');
 $('forward').onclick = () => tb.nav('forward');
 $('reload').onclick = () => tb.nav('reload');
 $('url').addEventListener('keydown', (e) => { if (e.key === 'Enter') tb.nav('go', e.target.value); });
+$('external').onclick = () => tb.external().catch((e) => status(e.message, 'error'));
 $('fit').onclick = () => tb.fit().then(showFit).catch((e) => status(e.message, 'error'));
 
 $('fill').onclick = () => run('fill', async () => {

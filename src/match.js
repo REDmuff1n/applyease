@@ -63,14 +63,10 @@ function jobTypes(job, text = '') {
   return TYPES.filter(([, re]) => re.test(head)).map(([t]) => t);
 }
 
-// Titles that aren't for students or new graduates.
-const SENIOR = /\b(senior|sr\.?|lead|principal|staff|head|director|manager|vp|vice president|chief|expert|architect|partner)\b/i;
-const isSenior = (job) => SENIOR.test(String(job.role || '')) && !/\b(intern|trainee|gyakornok|working student|junior|graduate)\b/i.test(String(job.role || ''));
-
 // The user's own prefs from app state.
 function prefsOf(state) {
   const p = state.profile || {};
   return { roles: state.preferences?.targetRoles, places: state.preferences?.locations, home: [p.country, p.city].filter(Boolean) };
 }
 
-module.exports = { matchJob, roleMatch, placeMatch, remoteOk, remoteOpenTo, jobTypes, isSenior, prefsOf, listOf };
+module.exports = { matchJob, roleMatch, placeMatch, remoteOk, remoteOpenTo, jobTypes, prefsOf, listOf };
