@@ -222,6 +222,8 @@ handle('ai:models', async () => llm.listModels(aiConfigDraft()));
 handle('secret:set', async (_e, name, value) => {
   if (!/^feed:[a-z]+$/.test(name)) throw new Error('Unknown key');
   store.setSecret(name, value);
+  resetSource(name.slice('feed:'.length));
+  refreshLive(true).catch(() => {});
   return store.publicState();
 });
 
@@ -390,6 +392,12 @@ handle('live:refresh', async (_e, force) => { await refreshLive(Boolean(force));
 handle('live:markSeen', () => { loadLive().lastViewedAt = new Date().toISOString(); saveLive(); return true; });
 handle('live:job', (_e, id) => loadLive().jobs.find((j) => j.id === id) || null);
 handle('live:reschedule', () => { scheduleLive(); return true; });
+// A source's key or settings changed: forget when it last ran so the next refresh fetches it.
+function resetSource(id) {
+  const c = loadLive();
+  if (c.status?.[id]) { delete c.status[id].fetchedAt; delete c.status[id].failedAt; saveLive(); }
+}
+handle('live:resetSource', async (_e, id) => { resetSource(String(id)); await refreshLive(true); return liveView(); });
 
 // ---------- Batch: score and tailor saved jobs ----------
 

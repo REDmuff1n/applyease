@@ -50,7 +50,7 @@ const DEFAULTS = {
   feeds: {
     arbeitnow: true, himalayas: true, remotive: true, remoteok: false, themuse: true, boards: true,
     adzuna: false, adzunaAppId: '', adzunaCountry: 'gb',
-    jooble: false, jsearch: false,
+    jooble: false, jsearch: false, jsearchCountry: 'us',
     maxAgeDays: 7, autoRefreshMins: 30
   },
   onboarded: false

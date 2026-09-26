@@ -19,7 +19,7 @@ const fetchFn = async (url, init) => {
   let body;
   if (url.includes('arbeitnow')) body = responses.arbeitnow(+new URL(url).searchParams.get('page'));
   else if (url.includes('remotive')) body = responses.remotive;
-  else if (url.includes('jsearch')) body = { data: [{ job_id: 'j1', job_title: 'Finance Analyst Intern', employer_name: 'Gamma', job_publisher: 'LinkedIn', job_apply_link: 'https://linkedin.com/jobs/view/1', job_description: 'Excel', job_city: 'Budapest', job_country: 'HU', job_posted_at_datetime_utc: '2026-09-25T08:00:00Z' }] };
+  else if (url.includes('jsearch')) body = { status: 'OK', data: { cursor: null, jobs: [{ job_id: 'j1', job_title: 'Finance Analyst Intern', employer_name: 'Gamma', job_publisher: 'LinkedIn', job_apply_link: 'https://linkedin.com/jobs/view/1', job_description: 'Excel', job_city: 'Budapest', job_country: 'HU', job_posted_at_datetime_utc: '2026-09-25T08:00:00Z', job_employment_types: ['FULLTIME'] }] } };
   else return { ok: false, status: 404, json: async () => ({}) };
   return { ok: true, status: 200, json: async () => body };
 };
@@ -49,11 +49,21 @@ const state = {
   assert(!calls.some((x) => x.url.includes('remotive')), 'Remotive asks for max 4 refreshes a day');
   const js = calls.find((x) => x.url.includes('jsearch'));
   assert.strictEqual(js.init.headers['x-rapidapi-key'], 'rk');
+  assert(js.url.startsWith('https://jsearch.p.rapidapi.com/search-v2?'), 'JSearch v2 endpoint: ' + js.url);
+  assert(js.url.includes('country=us') && js.url.includes('language=en'), js.url);
+  assert(js.url.includes('query=finance+analyst+jobs+in+Budapest') || js.url.includes('query=finance+analyst+remote'), 'plain phrase, not OR: ' + js.url);
   assert.strictEqual(calls.filter((x) => x.url.includes('jsearch')).length, 2, 'one JSearch request per place');
   assert.strictEqual(c.jobs.find((j) => j.role === 'Finance Intern').firstSeen, new Date(NOW).toISOString(), 'first-seen time kept');
   const li = c.jobs.find((j) => j.source === 'jsearch');
   assert.strictEqual(li.via, 'LinkedIn');
   assert.strictEqual(li.firstSeen, new Date(later).toISOString());
+
+  assert.deepStrictEqual(li.tags, ['LinkedIn', 'FULLTIME']);
+
+  // The service's own message is shown, not just the status code.
+  const said = await refresh({ preferences: {}, feeds: { jsearch: true, jsearchCountry: 'de' } }, {}, { keys: { 'feed:jsearch': 'k' }, now: NOW,
+    fetchFn: async (url) => ({ ok: false, status: 404, json: async () => ({ message: "Endpoint '/search' does not exist" }), url }) });
+  assert.strictEqual(said.status.jsearch.error, "HTTP 404: Endpoint '/search' does not exist");
 
   // Turning a source off hides its jobs.
   c = await refresh({ ...state, feeds: { ...state.feeds, remotive: false } }, c, { fetchFn, now: later });

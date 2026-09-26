@@ -14,10 +14,13 @@ const words = (s) => String(s || '').split(/[,;\n]/).map((x) => x.trim()).filter
 
 async function getJson(fetchFn, url, init = {}) {
   const res = await fetchFn(url, { ...init, headers: { accept: 'application/json', 'user-agent': 'ApplyEase (+https://github.com/REDmuff1n/applyease)', ...(init.headers || {}) } });
-  if (res.status === 401 || res.status === 403) throw new Error('key rejected or access denied');
-  if (res.status === 429) throw new Error('rate limit reached, try again later');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  if (res.ok) return res.json();
+  // Say what the service said ("You are not subscribed to this API", …), not just a number.
+  let said = '';
+  try { const b = await res.json(); said = String(b?.message || b?.error?.message || b?.error || '').slice(0, 160); } catch { /* not JSON */ }
+  if (res.status === 401 || res.status === 403) throw new Error(`key rejected or access denied${said ? ': ' + said : ''}`);
+  if (res.status === 429) throw new Error(`rate limit or monthly quota reached${said ? ': ' + said : ''}`);
+  throw new Error(`HTTP ${res.status}${said ? ': ' + said : ''}`);
 }
 
 // id: settings key; minHours: shortest refresh interval (some feeds ask for this);
@@ -124,19 +127,39 @@ const SOURCES = {
     }
   },
   jsearch: {
-    label: 'LinkedIn · Indeed · Glassdoor (JSearch)', about: 'Jobs posted on LinkedIn, Indeed, Glassdoor, ZipRecruiter and company sites, through Google for Jobs. Free RapidAPI key (about 200 searches a month), so it refreshes twice a day.', key: 'feed:jsearch', minHours: 12, keyUrl: 'https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch',
+    label: 'LinkedIn · Indeed · Glassdoor (JSearch)', about: 'Jobs posted on LinkedIn, Indeed, Glassdoor, ZipRecruiter and company sites, through Google for Jobs. Free RapidAPI key (about 200 searches a month), so it refreshes twice a day. Google for Jobs covers some countries only (not Hungary, for example): pick the country to search below; remote jobs are searched there too.', key: 'feed:jsearch', minHours: 12, keyUrl: 'https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch',
     async fetch({ fetchFn, keywords, locations, keys, feeds }) {
       if (!keys['feed:jsearch']) throw new Error('add your RapidAPI key in Settings');
       const out = [];
-      const age = (feeds.maxAgeDays || 7) <= 1 ? 'today' : feeds.maxAgeDays <= 3 ? '3days' : 'week';
+      const age = (feeds.maxAgeDays || 7) <= 1 ? 'today' : feeds.maxAgeDays <= 3 ? '3days' : feeds.maxAgeDays <= 7 ? 'week' : 'month';
+      const country = String(feeds.jsearchCountry || 'us').toLowerCase();
       // One search per place (max 2) keeps a refresh to 2 requests of the free quota.
-      const what = (keywords.length ? keywords : ['internship']).slice(0, 4).join(' OR ');
+      // JSearch reads the query like a person would: "finance analyst" finds far more
+      // than "finance OR financial OR analyst". Use the first two distinct role words.
+      const stems = new Set();
+      const words = (keywords.length ? keywords : ['internship']).filter((k) => {
+        const stem = k.toLowerCase().slice(0, 5);
+        if (stems.has(stem)) return false;
+        stems.add(stem);
+        return true;
+      });
+      const what = words.slice(0, 2).join(' ');
       for (const l of (locations.length ? locations : ['']).slice(0, 2)) {
-        const query = /remote/i.test(l) ? `${what} remote` : l ? `${what} in ${l}` : what;
-        const q = new URLSearchParams({ query, page: '1', num_pages: '1', date_posted: age });
-        if (/remote/i.test(l)) q.set('work_from_home', 'true');
-        const d = await getJson(fetchFn, `https://jsearch.p.rapidapi.com/search?${q}`, { headers: { 'x-rapidapi-key': keys['feed:jsearch'], 'x-rapidapi-host': 'jsearch.p.rapidapi.com' } });
-        out.push(...(d.data || []).map((j) => ({ id: 'js-' + j.job_id, role: j.job_title, company: j.employer_name, location: [[j.job_city, j.job_country].filter(Boolean).join(', '), j.job_is_remote ? 'Remote' : ''].filter(Boolean).join(' · '), url: j.job_apply_link || j.job_google_link, posted: iso(j.job_posted_at_datetime_utc || j.job_posted_at_timestamp), text: htmlToText(j.job_description), tags: [j.job_publisher, j.job_employment_type].filter(Boolean), via: j.job_publisher })));
+        const remote = /remote/i.test(l);
+        const query = remote ? `${what} remote` : l ? `${what} jobs in ${l}` : what;
+        const q = new URLSearchParams({ query, num_pages: '1', country, language: 'en', date_posted: age });
+        if (remote) q.set('work_from_home', 'true');
+        // JSearch renamed /search to /search-v2 (jobs now sit in data.jobs).
+        const d = await getJson(fetchFn, `https://jsearch.p.rapidapi.com/search-v2?${q}`, { headers: { 'x-rapidapi-key': keys['feed:jsearch'], 'x-rapidapi-host': 'jsearch.p.rapidapi.com' } });
+        const jobs = Array.isArray(d.data) ? d.data : d.data?.jobs || [];
+        out.push(...jobs.map((j) => ({
+          id: 'js-' + (j.job_id || j.job_uid), role: j.job_title, company: j.employer_name,
+          location: [j.job_location || [j.job_city, j.job_country].filter(Boolean).join(', '), j.job_is_remote ? 'Remote' : ''].filter(Boolean).join(' · '),
+          url: j.job_apply_link || j.job_google_link,
+          posted: iso(j.job_posted_at_datetime_utc || j.job_posted_at_timestamp),
+          text: [htmlToText(j.job_description), j.job_salary_string && 'Salary: ' + j.job_salary_string].filter(Boolean).join('\n'),
+          tags: [j.job_publisher, ...(j.job_employment_types || [j.job_employment_type])].filter(Boolean), via: j.job_publisher
+        })));
       }
       return out;
     }

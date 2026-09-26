@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('api', {
   liveMarkSeen: () => call('live:markSeen'),
   liveJob: (id) => call('live:job', id),
   liveReschedule: () => call('live:reschedule'),
+  liveResetSource: (id) => call('live:resetSource', id),
   onLive: (fn) => ipcRenderer.on('live:changed', () => fn()),
   batchRun: (opts) => call('batch:run', opts),
   batchCancel: () => call('batch:cancel'),

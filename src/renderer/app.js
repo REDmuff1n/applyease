@@ -624,6 +624,9 @@ BIND.tracker = (v) => {
 
 // ---------------- Settings ----------------
 
+// Countries Google for Jobs (and so JSearch) covers well.
+const JSEARCH_COUNTRIES = [['us', 'United States'], ['gb', 'United Kingdom'], ['ie', 'Ireland'], ['de', 'Germany'], ['at', 'Austria'], ['ch', 'Switzerland'], ['nl', 'Netherlands'], ['be', 'Belgium'], ['fr', 'France'], ['es', 'Spain'], ['it', 'Italy'], ['pt', 'Portugal'], ['pl', 'Poland'], ['se', 'Sweden'], ['dk', 'Denmark'], ['ca', 'Canada'], ['au', 'Australia'], ['in', 'India'], ['sg', 'Singapore'], ['ae', 'United Arab Emirates']];
+
 let PROV = {}; // AI providers, from the main process
 let modelList = [];
 
@@ -660,6 +663,7 @@ PAGES.settings = () => {
         <p class="small muted">${esc(x.about)} ${x.keyUrl ? `<a href="#" data-url="${esc(x.keyUrl)}">Get a free key ↗</a>` : ''}</p>
         ${id === 'boards' ? `<textarea id="boards" rows="6" spellcheck="false" placeholder="https://boards.greenhouse.io/company&#10;https://jobs.lever.co/company&#10;https://jobs.ashbyhq.com/company&#10;https://apply.workable.com/company&#10;https://careers.smartrecruiters.com/Company?country=hu">${esc(S.preferences.boards)}</textarea>
           <div class="row" style="margin-top:6px"><button id="saveBoards" class="primary">Save &amp; load jobs</button><span class="small muted">${listOfWords(String(S.preferences.boards || '').replace(/\n/g, ',')).length} companies</span></div>` : ''}
+        ${id === 'jsearch' ? `<label class="switch" style="margin-bottom:6px">Country to search <select id="jsearchCountry" style="width:auto">${JSEARCH_COUNTRIES.map(([c, n]) => `<option value="${c}" ${c === (f.jsearchCountry || 'us') ? 'selected' : ''}>${n}</option>`).join('')}</select></label>` : ''}
         ${id === 'adzuna' ? `<div class="row" style="flex-wrap:nowrap;margin-bottom:6px"><input id="adzunaId" placeholder="App ID" value="${esc(f.adzunaAppId)}" style="width:140px">
           <select id="adzunaCountry" style="width:auto">${['gb', 'us', 'de', 'at', 'nl', 'pl', 'fr', 'it', 'es', 'be', 'ch', 'ca', 'au', 'in', 'sg'].map((c) => `<option ${c === f.adzunaCountry ? 'selected' : ''}>${c}</option>`).join('')}</select></div>` : ''}
         ${x.key ? keyRow(x.key, id === 'adzuna' ? 'App key' : 'API key') : ''}
@@ -728,6 +732,13 @@ BIND.settings = (v) => {
     } finally { render(); }
   }));
   $('#adzunaCountry', v)?.addEventListener('change', (e) => feedsChanged({ adzunaCountry: e.target.value }));
+  $('#jsearchCountry', v)?.addEventListener('change', (e) => safe(async () => {
+    S = await api.update({ feeds: { jsearchCountry: e.target.value } });
+    LIVE = await api.liveResetSource('jsearch');
+    updateLiveCount();
+    const st = LIVE.status.jsearch;
+    toast(st?.ok ? `JSearch: ${st.count} jobs` : `JSearch: ${st?.error || 'no result'}`);
+  }));
   $('#maxAge', v).onchange = (e) => feedsChanged({ maxAgeDays: +e.target.value });
   $('#autoRefresh', v).onchange = (e) => feedsChanged({ autoRefreshMins: +e.target.value });
   $$('[data-save-secret]', v).forEach((b) => { b.onclick = () => safe(async () => {
