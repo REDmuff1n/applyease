@@ -12,6 +12,25 @@ assert.deepStrictEqual(parseBoard('https://jobs.ashbyhq.com/ramp'), { ats: 'ashb
 assert.deepStrictEqual(parseBoard('https://apply.workable.com/huggingface/'), { ats: 'workable', slug: 'huggingface' });
 assert.deepStrictEqual(parseBoard('smartrecruiters:Bosch'), { ats: 'smartrecruiters', slug: 'Bosch' });
 assert.strictEqual(parseBoard('https://example.com/careers'), null);
+assert.deepStrictEqual(parseBoard('smartrecruiters:Wise?country=hu'), { ats: 'smartrecruiters', slug: 'Wise', query: 'country=hu' });
+assert.deepStrictEqual(parseBoard('https://careers.smartrecruiters.com/BoschGroup?country=hu&utm=x'), { ats: 'smartrecruiters', slug: 'BoschGroup', query: 'country=hu' });
+
+// ---- which jobs count as "mine" ----
+const { matchJob } = require('../src/match');
+const me = { roles: 'analyst, finance', places: 'Budapest, Remote', home: ['Hungary', 'Budapest'] };
+const ok = (role, location) => matchJob({ role, location }, me);
+assert(ok('Finance Intern', 'Budapest, Hungary'));
+assert(ok('Data Analyst', 'Remote'));
+assert(ok('Data Analyst', 'Remote · Worldwide'));
+assert(ok('Data Analyst', 'Remote, EMEA'));
+assert(ok('Data Analyst', 'Remote - Hungary'));
+assert(ok('Data Analyst', ''), 'unknown location is kept');
+assert(!ok('Data Analyst', 'Remote - USA'), 'US-only remote');
+assert(!ok('Data Analyst', 'US-Remote-CA, US-San Francisco'));
+assert(!ok('Data Analyst', 'Berlin · Remote'), 'remote inside another country');
+assert(!ok('Data Analyst', 'London'));
+assert(!ok('Software Engineer', 'Budapest'), 'role must match');
+assert(matchJob({ role: 'Engineer', location: 'Berlin' }, { roles: '', places: '' }), 'no prefs = everything');
 
 // ---- JSON-LD ----
 const page = `<html><head><title>x</title><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Other"},
@@ -68,5 +87,19 @@ const state = {
 
   const all = await discover(state, { boards: 'greenhouse:acme', keywords: '', locations: '', fetchFn });
   assert.strictEqual(all.results.length, 3, 'no filter keeps everything');
+
+  // SmartRecruiters: filters are passed on and pages are followed
+  const srUrls = [];
+  const srFetch = async (url) => {
+    srUrls.push(url);
+    const offset = +new URL(url).searchParams.get('offset');
+    const content = Array.from({ length: offset < 200 ? 100 : 20 }, (_, k) => ({ id: String(offset + k), name: 'Finance Analyst', location: { city: 'Budapest', country: 'hu' }, company: { name: 'Wise' } }));
+    return { ok: true, status: 200, json: async () => ({ totalFound: 220, content }) };
+  };
+  const sr = await discover(state, { boards: 'smartrecruiters:Wise?country=hu', fetchFn: srFetch });
+  assert.strictEqual(srUrls.length, 3, 'three pages for 220 jobs');
+  assert(srUrls.every((u) => u.includes('&country=hu')), srUrls[0]);
+  assert.strictEqual(sr.total, 220);
+  assert.strictEqual(sr.results[0].location, 'Budapest, HU');
   console.log('discover/jobdata/quality tests passed', r.results.map((j) => `${j.role}=${j.fit}`).join(', '));
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -59,6 +59,33 @@ const state = {
   c = await refresh({ ...state, feeds: { ...state.feeds, remotive: false } }, c, { fetchFn, now: later });
   assert(!c.jobs.some((j) => j.source === 'remotive'));
 
+  // Company boards: old postings stay while listed, closed ones go on the next fetch.
+  const boardsState = { preferences: { boards: 'greenhouse:acme' }, feeds: { boards: true, maxAgeDays: 7 } };
+  let listed = [1, 2];
+  const ghFetch = async () => ({ ok: true, status: 200, json: async () => ({ jobs: listed.map((n) => ({ id: n, title: 'Analyst ' + n, absolute_url: 'https://gh/' + n, location: { name: 'Budapest' }, first_published: '2026-08-01T00:00:00Z', content: 'x' })) }) });
+  let b = await refresh(boardsState, {}, { fetchFn: ghFetch, now: NOW });
+  assert.strictEqual(b.jobs.length, 2, 'open board jobs kept even when posted weeks ago');
+  listed = [2];
+  b = await refresh(boardsState, b, { fetchFn: ghFetch, now: NOW + 30 * 60000 });
+  assert.deepStrictEqual(b.jobs.map((j) => j.role), ['Analyst 2'], 'closed job removed');
+
+  // Same title in two cities from one company: both kept. A failing board: shown as a warning,
+  // old jobs kept; and a rate-limited request is retried once.
+  let calls429 = 0;
+  const mixed = async (url) => {
+    if (url.includes('greenhouse')) return { ok: true, status: 200, json: async () => ({ jobs: [
+      { id: 1, title: 'Support Agent', absolute_url: 'https://gh/1', location: { name: 'Budapest' }, content: 'x' },
+      { id: 2, title: 'Support Agent', absolute_url: 'https://gh/2', location: { name: 'Boston' }, content: 'x' }] }) };
+    calls429++;
+    return { ok: false, status: 429, json: async () => ({}) };
+  };
+  const two = { preferences: { boards: 'greenhouse:acme\nlever:beta' }, feeds: { boards: true } };
+  const m = await refresh(two, { jobs: [{ id: 'old', source: 'boards', role: 'Old role', company: 'Beta', url: 'https://lever/old', posted: '2026-01-01', firstSeen: '2026-01-01' }] }, { fetchFn: mixed, now: NOW });
+  assert.deepStrictEqual(m.jobs.filter((j) => j.role === 'Support Agent').map((j) => j.url).sort(), ['https://gh/1', 'https://gh/2']);
+  assert.strictEqual(calls429, 2, 'retried once');
+  assert.match(m.status.boards.warnings[0], /lever:beta — the site is rate-limiting/);
+  assert(m.jobs.some((j) => j.id === 'old'), 'jobs from the failing board are kept');
+
   const links = boardSearchLinks(state.preferences, 1);
   assert.deepStrictEqual(links.map((l) => l.label), ['LinkedIn', 'Indeed', 'Glassdoor']);
   assert(links[0].url.includes('keywords=finance%20OR%20analyst') && links[0].url.includes('location=Budapest') && links[0].url.includes('f_TPR=r86400'), links[0].url);

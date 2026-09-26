@@ -10,6 +10,7 @@ const { discover } = require('./discover');
 const { checkWriting } = require('./quality');
 const llm = require('./llm');
 const feeds = require('./feeds');
+const { matchJob, prefsOf } = require('./match');
 
 app.setName('ApplyEase');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -305,6 +306,7 @@ function saveLive() {
 function liveView() {
   const st = store.get();
   const c = loadLive();
+  const prefs = prefsOf(st);
   return {
     fetchedAt: c.fetchedAt || '',
     lastViewedAt: c.lastViewedAt || '',
@@ -315,7 +317,7 @@ function liveView() {
     jobs: c.jobs.map(({ text, ...j }) => {
       // title, company and place count too: some feeds only send a short description
       const f = checkFit(`Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n${(j.tags || []).join(', ')}\n\n${text || ''}`, st);
-      return { ...j, fit: f.score, verdict: f.verdict };
+      return { ...j, fit: f.score, verdict: f.verdict, mine: matchJob(j, prefs) };
     })
   };
 }

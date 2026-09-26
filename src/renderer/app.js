@@ -31,6 +31,7 @@ function go(t) {
     api.liveMarkSeen().then(() => { LIVE.lastViewedAt = new Date().toISOString(); updateLiveCount(); }).catch(() => {});
   }
   tab = t;
+  if (t === 'live' && LIVE) loadLive().catch(() => {}); // picks up changed preferences
   $$('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
   render();
   $('main').scrollTop = 0;
@@ -369,7 +370,7 @@ BIND.find = (v) => {
 // ---------------- Live jobs ----------------
 
 let LIVE = null; // from api.live()
-const liveUI = { q: '', age: 7, source: 'all', mine: true, newOnly: false, sort: 'new', limit: 100 };
+const liveUI = { q: '', age: 0, source: 'all', mine: true, newOnly: false, sort: 'new', limit: 100 };
 
 function ago(isoStr) {
   const t = Date.parse(isoStr);
@@ -381,17 +382,8 @@ function ago(isoStr) {
   return d === 1 ? 'yesterday' : `${d} days ago`;
 }
 
-const listOf = (s) => String(s || '').split(/[,;\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
-
-function matchesMe(j) {
-  const roles = listOf(S.preferences.targetRoles);
-  const locs = listOf(S.preferences.locations);
-  const role = String(j.role || '').toLowerCase();
-  const where = String(j.location || '').toLowerCase();
-  if (roles.length && !roles.some((r) => role.includes(r))) return false;
-  if (locs.length && where && !locs.some((l) => where.includes(l) || (l === 'remote' && /remote|anywhere|worldwide/.test(where)))) return false;
-  return true;
-}
+// Worked out in the main process (src/match.js), same rule as Find jobs.
+const matchesMe = (j) => Boolean(j.mine);
 
 const isNew = (j) => Boolean(LIVE?.lastViewedAt) && j.firstSeen > LIVE.lastViewedAt;
 
@@ -439,7 +431,7 @@ function liveTable() {
 PAGES.live = () => {
   if (!LIVE) return '<div class="page"><div class="page-head"><h1>Live jobs</h1><p>Loading…</p></div></div>';
   const enabled = Object.entries(LIVE.sources).filter(([, s]) => s.enabled);
-  const problems = enabled.filter(([id]) => LIVE.status[id] && !LIVE.status[id].ok).map(([id, s]) => `${s.label}: ${LIVE.status[id].error}`);
+  const problems = enabled.flatMap(([id, s]) => { const st = LIVE.status[id]; if (!st) return []; return st.ok ? (st.warnings || []).map((w) => `${s.label}: ${w}`) : [`${s.label}: ${st.error}`]; });
   const newCount = LIVE.jobs.filter((j) => isNew(j) && matchesMe(j)).length;
   return `<div class="page" style="max-width:1200px">
     <div class="page-head row"><div><h1>Live jobs</h1><p>The newest listings from ${enabled.length} source${enabled.length === 1 ? '' : 's'}, matched to what you're looking for. ${LIVE.fetchedAt ? 'Updated ' + ago(LIVE.fetchedAt) + '.' : ''}</p></div><span class="spacer"></span>

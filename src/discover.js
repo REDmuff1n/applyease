@@ -3,16 +3,22 @@
 // exactly this purpose. No scraping, no logins.
 const { htmlToText } = require('./jobdata');
 const { checkFit } = require('./fit');
+const { matchJob, prefsOf } = require('./match');
 
 const pretty = (slug) => String(slug).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 // Accepts "greenhouse:stripe", "lever/palantir" or a board URL like
 // https://boards.greenhouse.io/stripe or https://jobs.ashbyhq.com/ramp.
+// SmartRecruiters links may add filters, e.g. "smartrecruiters:BoschGroup?country=hu".
 function parseBoard(input) {
   const s = String(input || '').trim();
   if (!s) return null;
-  let m = s.match(/^(greenhouse|lever|ashby|workable|smartrecruiters)\s*[:/]\s*([\w.-]+)/i);
-  if (m) return { ats: m[1].toLowerCase(), slug: m[2] };
+  const m = s.match(/^(greenhouse|lever|ashby|workable|smartrecruiters)\s*[:/]\s*([\w.-]+)(\?\S*)?/i);
+  if (m) {
+    const b = { ats: m[1].toLowerCase(), slug: m[2] };
+    const f = b.ats === 'smartrecruiters' && m[3] ? srFilters(new URLSearchParams(m[3])) : '';
+    return f ? { ...b, query: f } : b;
+  }
   let u;
   try { u = new URL(/^https?:\/\//i.test(s) ? s : 'https://' + s); } catch { return null; }
   const host = u.hostname.toLowerCase();
@@ -29,16 +35,39 @@ function parseBoard(input) {
     const slug = host.startsWith('apply.') ? parts[0] : sub;
     return slug && slug !== 'www' ? { ats: 'workable', slug } : null;
   }
-  if (/smartrecruiters\.com$/.test(host) && parts[0]) return { ats: 'smartrecruiters', slug: parts[0] };
+  if (/smartrecruiters\.com$/.test(host) && parts[0]) {
+    const f = srFilters(q);
+    return f ? { ats: 'smartrecruiters', slug: parts[0], query: f } : { ats: 'smartrecruiters', slug: parts[0] };
+  }
   return null;
 }
 
-async function getJson(fetchFn, url) {
-  const res = await fetchFn(url, { headers: { accept: 'application/json' } });
+// Filters the SmartRecruiters postings API understands.
+function srFilters(params) {
+  const keep = new URLSearchParams();
+  for (const k of ['country', 'city', 'region', 'department', 'q']) if (params.get(k)) keep.set(k, params.get(k));
+  return keep.toString();
+}
+
+const boardName = (b) => `${b.ats}:${b.slug}${b.query ? '?' + b.query : ''}`;
+
+// One retry after a short pause for rate limits, server errors and network blips.
+async function getJson(fetchFn, url, retries = 1) {
+  let res;
+  try {
+    res = await fetchFn(url, { headers: { accept: 'application/json' } });
+  } catch (e) {
+    if (retries) { await pause(1500); return getJson(fetchFn, url, retries - 1); }
+    throw e;
+  }
   if (res.status === 404) throw new Error('board not found');
+  if ((res.status === 429 || res.status >= 500) && retries) { await pause(2000); return getJson(fetchFn, url, retries - 1); }
+  if (res.status === 429) throw new Error('the site is rate-limiting requests, try again later');
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const FETCHERS = {
   async greenhouse(slug, f) {
@@ -80,10 +109,16 @@ const FETCHERS = {
       text: htmlToText(j.description || '')
     }));
   },
-  async smartrecruiters(slug, f) {
-    const d = await getJson(f, `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(slug)}/postings?limit=100`);
+  async smartrecruiters(slug, f, query = '') {
+    // Big employers post thousands of jobs: page through up to 500 (add ?country=hu to narrow).
+    const content = [];
+    for (let offset = 0; offset < 500; offset += 100) {
+      const d = await getJson(f, `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(slug)}/postings?limit=100&offset=${offset}${query ? '&' + query : ''}`);
+      content.push(...(d.content || []));
+      if (!d.content?.length || offset + 100 >= (d.totalFound || 0)) break;
+    }
     // The list endpoint has no description; title + location + type is enough to rank.
-    return (d.content || []).map((j) => ({
+    return content.map((j) => ({
       id: 'sr-' + j.id, role: j.name, company: j.company?.name || pretty(slug),
       location: [j.location?.city, j.location?.country?.toUpperCase?.(), j.location?.remote ? 'Remote' : ''].filter(Boolean).join(', '),
       url: `https://jobs.smartrecruiters.com/${slug}/${j.id}`,
@@ -92,8 +127,6 @@ const FETCHERS = {
     }));
   }
 };
-
-const words = (s) => String(s || '').split(/[,;\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
 
 // Search every board, keep jobs matching the keyword/location filters, score and sort them.
 async function discover(state, { boards, keywords, locations, fetchFn = fetch } = {}) {
@@ -104,24 +137,20 @@ async function discover(state, { boards, keywords, locations, fetchFn = fetch } 
     const b = parseBoard(line);
     if (b) parsed.push(b); else errors.push(`Not a supported board: ${line.trim()}`);
   }
-  const kw = words(keywords ?? state.preferences?.targetRoles);
-  const locs = words(locations ?? state.preferences?.locations);
+  const prefs = { ...prefsOf(state), ...(keywords != null ? { roles: keywords } : {}), ...(locations != null ? { places: locations } : {}) };
 
-  const settled = await Promise.allSettled(parsed.map((b) => FETCHERS[b.ats](b.slug, fetchFn).then((jobs) => ({ b, jobs }))));
+  const settled = await Promise.allSettled(parsed.map((b) => FETCHERS[b.ats](b.slug, fetchFn, b.query).then((jobs) => ({ b, jobs }))));
   const seen = new Set();
   const results = [];
   let total = 0;
   settled.forEach((s, i) => {
-    if (s.status === 'rejected') { errors.push(`${parsed[i].ats}:${parsed[i].slug} — ${s.reason?.message || s.reason}`); return; }
-    if (!s.value.jobs.length) errors.push(`${parsed[i].ats}:${parsed[i].slug} — no open jobs (check the company name in the link)`);
+    if (s.status === 'rejected') { errors.push(`${boardName(parsed[i])} — ${s.reason?.message || s.reason}`); return; }
+    if (!s.value.jobs.length) errors.push(`${boardName(parsed[i])} — no open jobs (check the company name in the link)`);
     for (const j of s.value.jobs) {
       total++;
       if (!j.url || seen.has(j.url)) continue;
       seen.add(j.url);
-      const role = String(j.role || '').toLowerCase();
-      const where = String(j.location || '').toLowerCase();
-      if (kw.length && !kw.some((k) => role.includes(k))) continue;
-      if (locs.length && where && !locs.some((l) => where.includes(l) || (l === 'remote' && /remote|anywhere/.test(where)))) continue;
+      if (!matchJob(j, prefs)) continue;
       const full = `Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n\n${j.text}`;
       const fit = checkFit(full, state);
       results.push({ ...j, ats: s.value.b.ats, text: full.slice(0, 20000), fit: fit.score, verdict: fit.verdict });

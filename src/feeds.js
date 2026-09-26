@@ -91,7 +91,8 @@ const SOURCES = {
     async fetch({ fetchFn, state }) {
       if (!String(state.preferences?.boards || '').trim()) return [];
       const r = await discover(state, { boards: state.preferences.boards, keywords: '', locations: '', fetchFn });
-      return r.results.map((j) => ({ id: j.id, role: j.role, company: j.company, location: j.location, url: j.url, posted: iso(j.posted), text: j.text, tags: [j.ats] }));
+      const jobs = r.results.map((j) => ({ id: j.id, role: j.role, company: j.company, location: j.location, url: j.url, posted: iso(j.posted), text: j.text, tags: [j.ats] }));
+      return { jobs, warnings: r.errors }; // one broken board shouldn't hide the others
     }
   },
   adzuna: {
@@ -166,12 +167,14 @@ async function refresh(state, cache, { keys = {}, force = false, fetchFn = fetch
     return now - last >= hours * HOUR;
   });
 
-  const settled = await Promise.allSettled(due.map(([id, src]) => src.fetch({ fetchFn, keywords, locations, keys, feeds, state }).then((jobs) => ({ id, jobs }))));
+  // A source returns a list of jobs, or { jobs, warnings } when only part of it failed.
+  const settled = await Promise.allSettled(due.map(([id, src]) => src.fetch({ fetchFn, keywords, locations, keys, feeds, state })
+    .then((r) => (Array.isArray(r) ? { id, jobs: r, warnings: [] } : { id, jobs: r.jobs, warnings: r.warnings || [] }))));
   const fresh = [];
   settled.forEach((r, i) => {
     const id = due[i][0];
     if (r.status === 'fulfilled') {
-      status[id] = { fetchedAt: new Date(now).toISOString(), ok: true, count: r.value.jobs.length };
+      status[id] = { fetchedAt: new Date(now).toISOString(), ok: true, count: r.value.jobs.length, ...(r.value.warnings.length ? { warnings: r.value.warnings } : {}) };
       fresh.push(...r.value.jobs.map((j) => ({ ...j, source: id })));
     } else {
       // keep fetchedAt so a fixed key or a passing outage is retried soon
@@ -184,19 +187,27 @@ async function refresh(state, cache, { keys = {}, force = false, fetchFn = fetch
   const keyOf = (j) => j.url || `${norm(j.company)}|${norm(j.role)}`;
   for (const j of cache.jobs || []) if (feeds[j.source]) byKey.set(keyOf(j), j);
   const nowIso = new Date(now).toISOString();
-  const dupes = new Set([...byKey.values()].map((j) => `${norm(j.company)}|${norm(j.role)}`));
+  // Same role at the same company from a *different* source is a duplicate; one company
+  // listing the same title in several cities is not.
+  const dupes = new Map([...byKey.values()].map((j) => [`${norm(j.company)}|${norm(j.role)}`, j.source]));
   for (const j of fresh) {
     if (!j.url || !j.role) continue;
     const k = keyOf(j);
     const old = byKey.get(k);
     const sameJob = `${norm(j.company)}|${norm(j.role)}`;
-    if (!old && dupes.has(sameJob)) continue; // same role at the same company from another source
-    dupes.add(sameJob);
+    if (!old && dupes.has(sameJob) && dupes.get(sameJob) !== j.source) continue;
+    if (!dupes.has(sameJob)) dupes.set(sameJob, j.source);
     byKey.set(k, { ...j, text: String(j.text || '').slice(0, 5000), firstSeen: old?.firstSeen || nowIso });
   }
   const maxAge = (feeds.maxAgeDays || 7) * 24 * HOUR;
+  // Company boards only list jobs that are still open, so their older postings stay;
+  // a fresh fetch replaces them, which drops the ones that closed.
+  // (If some boards failed this time, keep what we had rather than dropping their jobs.)
+  const boardUrls = due.some(([id]) => id === 'boards') && status.boards?.ok && !status.boards.warnings ? new Set(fresh.filter((j) => j.source === 'boards').map((j) => j.url)) : null;
   const jobs = [...byKey.values()]
-    .filter((j) => now - (Date.parse(j.posted || j.firstSeen) || now) <= maxAge)
+    .filter((j) => (j.source === 'boards'
+      ? !boardUrls || boardUrls.has(j.url)
+      : now - (Date.parse(j.posted || j.firstSeen) || now) <= maxAge))
     .sort((a, b) => String(b.posted || b.firstSeen).localeCompare(String(a.posted || a.firstSeen)))
     .slice(0, 2000);
   return { ...cache, jobs, status, fetchedAt: nowIso };
