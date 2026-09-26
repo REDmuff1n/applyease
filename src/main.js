@@ -9,7 +9,7 @@ const { extractJobPosting, fromPosting, htmlToText, jobText } = require('./jobda
 const { checkWriting } = require('./quality');
 const llm = require('./llm');
 const feeds = require('./feeds');
-const { roleMatch, placeMatch, remoteOpenTo, jobTypes, prefsOf } = require('./match');
+const { roleMatch, placeMatch, remoteOpenTo, jobTypes, countryOf, cityOf, prefsOf } = require('./match');
 
 app.setName('ApplyEase');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -351,6 +351,7 @@ async function liveView() {
       const placeOk = placeMatch(j, prefs.places, prefs.home, { strict: true });
       return {
         ...j, fit: f.score, verdict: f.verdict, types: f.types, roleOk, placeOk,
+        country: countryOf(j.location), city: cityOf(j.location),
         remoteOpen: remoteOpenTo(j, prefs.home.map((h) => String(h).toLowerCase())),
         mine: roleOk && placeOk
       };

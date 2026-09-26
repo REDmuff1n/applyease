@@ -358,12 +358,34 @@ function roleOk(j) {
   return !roles.length || roles.some((r) => title.includes(r));
 }
 
+// Location filter values: 'mine', 'any', 'remote', 'country:Hungary' or 'city:Budapest'.
+// A city also shows jobs listed only by its country ("Hungary" for Budapest).
 function placeOk(j, place) {
-  const where = String(j.location || '').toLowerCase();
   if (place === 'any') return true;
   if (place === 'mine') return j.placeOk;
   if (place === 'remote') return j.remoteOpen;
-  return where.includes(place);
+  if (place.startsWith('country:')) return j.country === place.slice(8);
+  const city = (place.startsWith('city:') ? place.slice(5) : place).toLowerCase(); // older saved filters were plain city names
+  if (String(j.city).toLowerCase() === city || String(j.location || '').toLowerCase().includes(city)) return true;
+  const inCountry = cityCountries().get(city);
+  return Boolean(inCountry && !j.city && j.country === inCountry && !/remote/i.test(j.location || ''));
+}
+
+// Which country each city in the list is in, learned from the jobs themselves.
+let cityCountryCache = { jobs: null, map: new Map() };
+function cityCountries() {
+  if (cityCountryCache.jobs === LIVE.jobs) return cityCountryCache.map;
+  const votes = new Map();
+  for (const j of LIVE.jobs) {
+    if (!j.city || !j.country) continue;
+    const k = j.city.toLowerCase();
+    const v = votes.get(k) || {};
+    v[j.country] = (v[j.country] || 0) + 1;
+    votes.set(k, v);
+  }
+  const map = new Map([...votes].map(([c, v]) => [c, Object.entries(v).sort((a, b) => b[1] - a[1])[0][0]]));
+  cityCountryCache = { jobs: LIVE.jobs, map };
+  return map;
 }
 
 function liveRows() {
@@ -442,18 +464,29 @@ function pager(page, pages) {
   return `<div class="pager"><button class="ghost" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹ Prev</button>${parts.join('')}<button class="ghost" data-page="${page + 1}" ${page >= pages - 1 ? 'disabled' : ''}>Next ›</button></div>`;
 }
 
-// Countries and regions, so the Location list only offers cities.
-const COUNTRY = /^(hungary|germany|deutschland|austria|france|spain|italy|portugal|netherlands|belgium|switzerland|poland|czechia|czech republic|slovakia|romania|bulgaria|croatia|serbia|greece|ireland|united kingdom|uk|england|scotland|denmark|sweden|norway|finland|estonia|latvia|lithuania|ukraine|turkey|cyprus|malta|luxembourg|slovenia|united states|usa|us|canada|mexico|brazil|argentina|colombia|chile|peru|india|pakistan|bangladesh|china|japan|korea|south korea|singapore|philippines|indonesia|malaysia|vietnam|thailand|australia|new zealand|south africa|nigeria|kenya|egypt|israel|uae|united arab emirates|saudi arabia|europe|emea|apac|latam|americas|north america|asia|africa|[a-z]{2})$/i;
+// Location choices: your places, anywhere, remote, then countries and cities
+// (most jobs first), each with its number of jobs.
+function placeGroups() {
+  const count = (key) => {
+    const m = new Map();
+    for (const j of LIVE.jobs) if (j[key]) m.set(j[key], (m.get(j[key]) || 0) + 1);
+    return [...m.entries()].sort((x, y) => y[1] - x[1]);
+  };
+  const countries = count('country').slice(0, 30).map(([c, n]) => [`country:${c}`, `${c} (${n})`]);
+  const cities = count('city').slice(0, 40).map(([c, n]) => [`city:${c}`, `${c} (${n})`]);
+  return {
+    top: [['mine', `My places (${S.preferences.locations || 'anywhere'})`], ['any', 'Anywhere'], ['remote', 'Remote (open to Europe / worldwide)']],
+    countries, cities
+  };
+}
 
-// Place choices: your places, remote, then the most common cities in the list.
-function placeOptions() {
-  const count = new Map();
-  for (const j of LIVE.jobs) {
-    const city = String(j.location || '').split(/[,·/;|(]/)[0].trim();
-    if (city && !/remote|anywhere|worldwide/i.test(city) && !COUNTRY.test(city) && city.length < 30) count.set(city, (count.get(city) || 0) + 1);
-  }
-  const top = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([c]) => c).sort((a, b) => a.localeCompare(b));
-  return [['mine', `My places (${S.preferences.locations || 'anywhere'})`], ['any', 'Anywhere'], ['remote', 'Remote (open to Europe / worldwide)'], ...top.map((c) => [c.toLowerCase(), c])];
+function placeSelect(value) {
+  const g = placeGroups();
+  const known = [...g.top, ...g.countries, ...g.cities].some(([v]) => v === value);
+  const opt = ([v, l]) => `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`;
+  return `<select id="livePlace">${g.top.map(opt).join('')}${known ? '' : opt([value, value.replace(/^(city|country):/, '')])}
+    <optgroup label="Countries">${g.countries.map(opt).join('')}</optgroup>
+    <optgroup label="Cities">${g.cities.map(opt).join('')}</optgroup></select>`;
 }
 
 PAGES.live = () => {
@@ -462,8 +495,6 @@ PAGES.live = () => {
   const enabled = Object.entries(LIVE.sources).filter(([, s]) => s.enabled);
   const problems = enabled.flatMap(([id, s]) => { const st = LIVE.status[id]; if (!st) return []; return st.ok ? (st.warnings || []).map((w) => `${s.label}: ${w}`) : [`${s.label}: ${st.error}`]; });
   const newCount = LIVE.jobs.filter((j) => isNew(j) && matchesMe(j)).length;
-  const places = placeOptions();
-  if (!places.some(([v]) => v === f.place)) places.push([f.place, f.place]);
   const sel = (id, value, opts) => `<select id="${id}" style="width:auto">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   return `<div class="page" style="max-width:1200px">
     <div class="page-head row"><div><h1>Live jobs</h1><p>The newest listings from ${enabled.length} source${enabled.length === 1 ? '' : 's'}. ${LIVE.fetchedAt ? 'Updated ' + ago(LIVE.fetchedAt) + '.' : ''}</p></div><span class="spacer"></span>
@@ -481,7 +512,7 @@ PAGES.live = () => {
       </div>
       <div class="filter-grid">
         <label>Job type ${sel('liveType', f.type, [['any', 'Any type'], ...Object.entries(TYPE_LABELS)])}</label>
-        <label>Location ${sel('livePlace', f.place, places)}</label>
+        <label>Location ${placeSelect(f.place)}</label>
         <label>Posted ${sel('liveAge', f.age, [[0, 'Any time'], [1, 'Last 24 hours'], [3, 'Last 3 days'], [7, 'Last 7 days'], [30, 'Last 30 days']])}</label>
         <label>Source ${sel('liveSource', f.source, [['all', 'All sources'], ...enabled.map(([id, s]) => [id, s.label])])}</label>
         <label>Hide titles with <input id="liveExclude" placeholder="e.g. engineer, German" value="${esc(f.exclude)}"></label>

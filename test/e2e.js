@@ -130,8 +130,14 @@ app.whenReady().then(async () => {
     await wait(50);
     assert((await listText()).includes('Showing 1–20 of 33 jobs · page 1 of 2'), 'Show all jobs: ' + (await listText()).slice(0, 80));
     const places = await ui('[...document.querySelectorAll("#livePlace option")].map((o) => o.value)');
-    assert(places.includes('budapest') && places.includes('berlin'), 'cities offered: ' + places);
-    assert(!places.includes('hungary') && !places.includes('hu'), 'no countries in the Location list');
+    assert(places.includes('city:Budapest') && places.includes('city:Berlin'), 'cities offered: ' + places);
+    assert(places.includes('country:Hungary') && places.includes('country:Germany'), 'countries offered: ' + places);
+    assert.deepStrictEqual(await ui('[...document.querySelectorAll("#livePlace optgroup")].map((g) => g.label)'), ['Countries', 'Cities']);
+    await pick('livePlace', 'country:Germany');
+    assert.strictEqual(await rows(), 1, 'country: Germany (the Berlin job)');
+    await pick('livePlace', 'city:Budapest');
+    assert((await listText()).includes('of 31 jobs'), 'city: Budapest');
+    await pick('livePlace', 'any');
     const typeRoles = (text) => ui(`(() => { const i = document.querySelector('#liveRolesText'); i.value = ${JSON.stringify(text)}; i.dispatchEvent(new Event('input')); })()`);
     await typeRoles('backend');
     assert.strictEqual(await rows(), 1, 'typing target roles filters straight away (and ticks "Only my target roles")');

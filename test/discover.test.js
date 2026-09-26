@@ -38,7 +38,17 @@ assert.deepStrictEqual(jobTypes({ role: 'Werkstudent Vertrieb', tags: ['Part Tim
 assert.deepStrictEqual(jobTypes({ role: 'Analyst' }, 'This is a full-time, permanent role.'), ['fulltime']);
 assert.deepStrictEqual(jobTypes({ role: 'Customer Success Manager - 1 Year Maternity Cover' }), ['contract']);
 assert.deepStrictEqual(jobTypes({ role: 'Analyst' }, 'Great team.'), [], 'not stated');
-const { placeMatch } = require('../src/match');
+const { placeMatch, countryOf, cityOf } = require('../src/match');
+assert.strictEqual(countryOf('Budapest, HU'), 'Hungary');
+assert.strictEqual(countryOf('Remote-Hungary'), 'Hungary');
+assert.strictEqual(countryOf('Berlin'), 'Germany', 'known city without a country');
+assert.strictEqual(countryOf('Anywhere · Remote'), '');
+assert.strictEqual(cityOf('Budapest, Debrecen, Pécs, Szeged, HU'), 'Budapest');
+assert.strictEqual(cityOf('Hungary'), '', 'a country is not a city');
+assert.strictEqual(cityOf('Würzburg · Remote'), 'Würzburg');
+assert.strictEqual(cityOf('München'), 'Munich', 'one name per city');
+assert(ok('Finance Analyst', 'Hungary'), 'a Hungary-only job counts for Budapest');
+assert(!ok('Finance Analyst', 'Germany'));
 assert(!ok('Finance Analyst III - NA', 'Remote'), 'region in the title');
 assert(!ok('Strategic Finance Analyst - San Francisco', 'Remote'));
 assert(!ok('Commercial Analyst, DACH', 'Remote'));
