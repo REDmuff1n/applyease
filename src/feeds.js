@@ -90,7 +90,7 @@ const SOURCES = {
     label: 'Your company boards', about: 'The career boards you added under Find jobs (Greenhouse, Lever, Ashby, Workable, SmartRecruiters).', minHours: 0.3,
     async fetch({ fetchFn, state }) {
       if (!String(state.preferences?.boards || '').trim()) return [];
-      const r = await discover(state, { boards: state.preferences.boards, keywords: '', locations: '', fetchFn });
+      const r = await discover(state, { boards: state.preferences.boards, keywords: '', locations: '', fetchFn, score: false });
       const jobs = r.results.map((j) => ({ id: j.id, role: j.role, company: j.company, location: j.location, url: j.url, posted: iso(j.posted), text: j.text, tags: [j.ats] }));
       return { jobs, warnings: r.errors }; // one broken board shouldn't hide the others
     }

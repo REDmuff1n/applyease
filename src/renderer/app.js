@@ -370,7 +370,8 @@ BIND.find = (v) => {
 // ---------------- Live jobs ----------------
 
 let LIVE = null; // from api.live()
-const liveUI = { q: '', age: 0, source: 'all', mine: true, newOnly: false, sort: 'new', limit: 100 };
+const liveUI = { q: '', age: 0, source: 'all', mine: true, newOnly: false, sort: 'new', page: 0 };
+const PER_PAGE = 20;
 
 function ago(isoStr) {
   const t = Date.parse(isoStr);
@@ -417,15 +418,30 @@ function liveTable() {
   if (!rows.length) {
     return `<div class="empty">${LIVE.jobs.length ? 'No jobs match these filters. Try “All posted dates” or turn off “Only my roles & places”.' : 'No jobs yet. Press Refresh, or turn on more sources in Settings.'}</div>`;
   }
-  return `<p class="small muted" style="margin:6px 4px">${rows.length} job${rows.length === 1 ? '' : 's'}${rows.length > liveUI.limit ? `, showing ${liveUI.limit}` : ''}.</p>
+  const pages = Math.ceil(rows.length / PER_PAGE);
+  liveUI.page = Math.min(liveUI.page, pages - 1);
+  const from = liveUI.page * PER_PAGE;
+  return `<p class="small muted" style="margin:6px 4px">Showing ${from + 1}–${Math.min(from + PER_PAGE, rows.length)} of ${rows.length} job${rows.length === 1 ? '' : 's'}.</p>
     <table><thead><tr><th style="width:6%">Fit</th><th>Role</th><th style="width:16%">Company</th><th style="width:17%">Location</th><th style="width:13%">Source</th><th style="width:9%">Posted</th><th style="width:196px"></th></tr></thead><tbody>
-    ${rows.slice(0, liveUI.limit).map((j) => `<tr data-id="${esc(j.id)}">
+    ${rows.slice(from, from + PER_PAGE).map((j) => `<tr data-id="${esc(j.id)}">
       <td><span class="pill ${j.fit >= 70 ? 'good' : j.fit >= 45 ? 'warn' : 'bad'}" title="${esc(j.verdict)}">${j.fit}</span></td>
       <td>${isNew(j) ? '<span class="pill new">New</span> ' : ''}${esc(j.role)}</td><td>${esc(j.company)}</td>
       <td class="small">${esc(j.location)}</td><td class="small muted">${esc(srcLabel(j))}</td><td class="small muted" title="${esc(j.posted)}">${esc(ago(j.posted || j.firstSeen))}</td>
       <td><div class="row" style="flex-wrap:nowrap;gap:4px"><button class="ghost l-check">Check</button><button class="ghost l-save">${S.jobs.some((x) => x.url === j.url) ? 'Saved ✓' : 'Save'}</button><button class="ghost l-open">Apply ↗</button></div></td>
     </tr>`).join('')}</tbody></table>
-    ${rows.length > liveUI.limit ? '<div class="row" style="justify-content:center;margin:10px"><button id="liveMore">Show more</button></div>' : ''}`;
+    ${pager(liveUI.page, pages)}`;
+}
+
+// « Prev  1 2 3 … 9  Next »: a window of pages around the current one.
+function pager(page, pages) {
+  if (pages <= 1) return '';
+  const nums = [...new Set([0, page - 2, page - 1, page, page + 1, page + 2, pages - 1])].filter((n) => n >= 0 && n < pages).sort((a, b) => a - b);
+  const parts = [];
+  nums.forEach((n, i) => {
+    if (i && n - nums[i - 1] > 1) parts.push('<span class="muted">…</span>');
+    parts.push(`<button class="${n === page ? 'primary' : 'ghost'}" data-page="${n}" ${n === page ? 'aria-current="page"' : ''}>${n + 1}</button>`);
+  });
+  return `<div class="pager"><button class="ghost" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹ Prev</button>${parts.join('')}<button class="ghost" data-page="${page + 1}" ${page >= pages - 1 ? 'disabled' : ''}>Next ›</button></div>`;
 }
 
 PAGES.live = () => {
@@ -459,11 +475,11 @@ PAGES.live = () => {
   </div>`;
 };
 BIND.live = (v) => {
-  const redrawList = () => { $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); };
+  const redrawList = () => { liveUI.page = 0; $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); };
   $('#liveRefresh', v).onclick = () => safe(async () => { LIVE = { ...LIVE, refreshing: true }; render(); try { LIVE = await api.liveRefresh(true); } finally { await loadLive(); } });
   $$('[data-link]', v).forEach((b) => { b.onclick = () => safe(() => api.openJob(LIVE.links[+b.dataset.link].url)); });
   $('#liveSources', v).onclick = () => { go('settings'); setTimeout(() => $('#sourcesCard')?.scrollIntoView({ behavior: 'smooth' }), 50); };
-  $('#liveQ', v).oninput = (e) => { liveUI.q = e.target.value; liveUI.limit = 100; redrawList(); };
+  $('#liveQ', v).oninput = (e) => { liveUI.q = e.target.value; redrawList(); };
   $('#liveAge', v).onchange = (e) => { liveUI.age = +e.target.value; redrawList(); };
   $('#liveSource', v).onchange = (e) => { liveUI.source = e.target.value; redrawList(); };
   $('#liveSort', v).onchange = (e) => { liveUI.sort = e.target.value; redrawList(); };
@@ -473,7 +489,11 @@ BIND.live = (v) => {
 };
 function bindLiveList(v) {
   const jobAt = (b) => LIVE.jobs.find((j) => j.id === b.closest('tr').dataset.id);
-  $('#liveMore', v)?.addEventListener('click', () => { liveUI.limit += 100; $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); });
+  $$('[data-page]', v).forEach((b) => { b.onclick = () => {
+    liveUI.page = +b.dataset.page;
+    $('#liveList', v).innerHTML = liveTable(); bindLiveList(v);
+    $('#liveList', v).scrollIntoView({ block: 'start' });
+  }; });
   $$('.l-open', v).forEach((b) => { b.onclick = () => safe(() => api.openJob(jobAt(b).url)); });
   $$('.l-check', v).forEach((b) => { b.onclick = () => safe(async () => {
     const j = await api.liveJob(jobAt(b).id);

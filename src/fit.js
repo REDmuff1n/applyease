@@ -7,7 +7,8 @@ const LANGS = ['english', 'hungarian', 'german', 'french', 'spanish', 'italian',
 
 
 function checkFit(text, state) {
-  const t = ' ' + String(text || '').toLowerCase().replace(/\s+/g, ' ') + ' ';
+  // The first 12k characters hold everything that matters; scanning more only costs time.
+  const t = ' ' + String(text || '').slice(0, 12000).toLowerCase().replace(/\s+/g, ' ') + ' ';
   const prefs = state.preferences || {};
   const profile = state.profile || {};
   const good = [];
@@ -55,6 +56,7 @@ function checkFit(text, state) {
   // Languages (compares the level the job asks for with the level you listed)
   const mine = languageLevels(profile.languages);
   for (const lang of LANGS) {
+    if (!t.includes(lang)) continue; // cheap check before the slower regex
     const need = requiredLevel(t, lang);
     if (!need) continue;
     const key = lang === 'bangla' ? 'bengali' : lang === 'mandarin' ? 'chinese' : lang;

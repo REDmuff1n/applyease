@@ -21,7 +21,9 @@ fs.writeFileSync(path.join(tmp, 'live-jobs.json'), JSON.stringify({
   jobs: [
     { id: 'an-1', source: 'arbeitnow', role: 'Finance Intern', company: 'Deutsche Bank', location: 'Remote', url: 'https://example.com/an-1', posted: hoursAgo(2), firstSeen: hoursAgo(1), text: 'Paid internship. Excel. Fluent English.' },
     { id: 'an-2', source: 'arbeitnow', role: 'Junior Financial Analyst', company: 'OTP Bank', location: 'Budapest', url: 'https://example.com/an-2', posted: hoursAgo(30), firstSeen: hoursAgo(20), text: 'Entry-level analyst, salary in HUF.' },
-    { id: 'an-3', source: 'arbeitnow', role: 'Senior Backend Engineer', company: 'Other', location: 'Berlin', url: 'https://example.com/an-3', posted: hoursAgo(3), firstSeen: hoursAgo(1), text: '7+ years of experience.' }
+    { id: 'an-3', source: 'arbeitnow', role: 'Senior Backend Engineer', company: 'Other', location: 'Berlin', url: 'https://example.com/an-3', posted: hoursAgo(3), firstSeen: hoursAgo(1), text: '7+ years of experience.' },
+    // 30 older matching jobs, to test the pages
+    ...Array.from({ length: 30 }, (_, i) => ({ id: 'bd-' + i, source: 'boards', role: `Finance Analyst ${i + 1}`, company: 'Bosch', location: 'Budapest, HU', url: `https://example.com/bd-${i}`, posted: hoursAgo(48 + i), firstSeen: hoursAgo(10), text: 'Finance analyst role in Budapest.' }))
   ]
 }));
 
@@ -99,12 +101,19 @@ app.whenReady().then(async () => {
     assert.strictEqual(await ui('document.querySelector("#liveCount").textContent'), '1', 'one new matching job (the senior one does not match)');
     await ui(`document.querySelector('[data-tab=live]').click()`);
     await wait(400);
-    assert.strictEqual(await ui('document.querySelectorAll("#liveList tbody tr").length'), 2, 'only my roles & places');
+    const rows = () => ui('document.querySelectorAll("#liveList tbody tr").length');
+    assert.strictEqual(await rows(), 20, 'page 1 shows 20 of the 32 matching jobs (the senior Berlin one does not match)');
+    assert(await ui('document.querySelector("#liveList").innerText.includes("Showing 1–20 of 32 jobs")'));
+    await ui('document.querySelector("[data-page=\\"1\\"]").click()');
+    assert.strictEqual(await rows(), 12, 'page 2 shows the other 12');
+    assert(await ui('document.querySelector("#liveList").innerText.includes("Showing 21–32 of 32 jobs")'));
+    assert(await ui('document.querySelector(".pager button:last-child").disabled'), 'Next is disabled on the last page');
     assert(await ui('+document.querySelector("#liveList .pill").textContent > 50'), 'fit uses title and place too');
     assert(await ui('document.body.innerText.includes("add your RapidAPI key")'), 'source problems shown');
     await ui(`(() => { const s = document.querySelector('#liveAge'); s.value = '1'; s.dispatchEvent(new Event('change')); })()`);
     await wait(100);
-    assert.strictEqual(await ui('document.querySelectorAll("#liveList tbody tr").length'), 1, 'last 24 hours');
+    assert.strictEqual(await rows(), 1, 'last 24 hours (and back to page 1)');
+    assert.strictEqual(await ui('document.querySelectorAll(".pager").length'), 0, 'no pager for a single page');
     await snap(main.webContents, 'main-live.png');
 
     const { openJobWindow, store } = global.__applyease;

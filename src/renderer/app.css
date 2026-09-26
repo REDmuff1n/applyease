@@ -72,3 +72,5 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 .source { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; }
 .source p { margin: 4px 0 8px; }
 @media (max-width: 1000px) { .sources { grid-template-columns: 1fr; } }
+.pager { display: flex; justify-content: center; align-items: center; gap: 4px; margin: 12px 0 6px; flex-wrap: wrap; }
+.pager button { min-width: 36px; padding: 5px 10px; }

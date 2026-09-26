@@ -129,7 +129,8 @@ const FETCHERS = {
 };
 
 // Search every board, keep jobs matching the keyword/location filters, score and sort them.
-async function discover(state, { boards, keywords, locations, fetchFn = fetch } = {}) {
+// score: false skips fit scoring (the Live dashboard scores and caches on its own).
+async function discover(state, { boards, keywords, locations, fetchFn = fetch, score = true } = {}) {
   const parsed = [];
   const errors = [];
   for (const line of String(boards || '').split(/[\n,]+/)) {
@@ -152,7 +153,7 @@ async function discover(state, { boards, keywords, locations, fetchFn = fetch } 
       seen.add(j.url);
       if (!matchJob(j, prefs)) continue;
       const full = `Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n\n${j.text}`;
-      const fit = checkFit(full, state);
+      const fit = score ? checkFit(full, state) : { score: 0, verdict: '' };
       results.push({ ...j, ats: s.value.b.ats, text: full.slice(0, 20000), fit: fit.score, verdict: fit.verdict });
     }
   });

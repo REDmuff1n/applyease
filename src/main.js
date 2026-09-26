@@ -315,11 +315,26 @@ function liveView() {
     sources: Object.fromEntries(Object.entries(feeds.SOURCES).map(([id, s]) => [id, { label: s.label, about: s.about, key: s.key || '', keyUrl: s.keyUrl || '', enabled: Boolean(st.feeds[id]) }])),
     links: feeds.boardSearchLinks(st.preferences, 1),
     jobs: c.jobs.map(({ text, ...j }) => {
-      // title, company and place count too: some feeds only send a short description
-      const f = checkFit(`Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n${(j.tags || []).join(', ')}\n\n${text || ''}`, st);
+      const f = liveFit(j, text, st);
       return { ...j, fit: f.score, verdict: f.verdict, mine: matchJob(j, prefs) };
     })
   };
+}
+
+// Fit scores are remembered per job and only worked out again when the profile or
+// preferences change, so opening or refreshing the dashboard never freezes the app.
+const fitMemo = { key: '', scores: new Map() };
+function liveFit(j, text, st) {
+  const key = JSON.stringify([st.profile.skills, st.profile.languages, st.preferences]);
+  if (key !== fitMemo.key) { fitMemo.key = key; fitMemo.scores.clear(); }
+  const id = `${j.id}|${j.url}`;
+  let f = fitMemo.scores.get(id);
+  if (!f) {
+    // title, company and place count too: some feeds only send a short description
+    f = checkFit(`Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n${(j.tags || []).join(', ')}\n\n${text || ''}`, st);
+    fitMemo.scores.set(id, { score: f.score, verdict: f.verdict });
+  }
+  return f;
 }
 
 function refreshLive(force) {

@@ -26,4 +26,12 @@ assert(senior.score < 50, 'senior should be low: ' + JSON.stringify(senior));
 assert.deepStrictEqual(guessMeta('Business Analyst Intern at Wise | LinkedIn', '', ''), { company: 'Wise', role: 'Business Analyst Intern' });
 assert.strictEqual(guessMeta('', '', 'https://jobs.lever.co/morgan-stanley/123').company, 'Morgan Stanley');
 
-console.log('fit tests passed', { good: good.score, hu: hu.score, unpaid: unpaid.score, senior: senior.score });
+// Speed: the Live dashboard scores up to 2,000 jobs; this must not freeze the app.
+const long = 'We are a fast growing company in Budapest looking for people who enjoy analysis and teamwork. '.repeat(60);
+let t0 = Date.now();
+for (let i = 0; i < 2000; i++) checkFit(`Job title: Analyst ${i}
+${long}`, state);
+const ms = Date.now() - t0;
+assert(ms < 4000, `2000 fit checks took ${ms} ms`);
+
+console.log('fit tests passed', { speed2000: ms + 'ms', good: good.score, hu: hu.score, unpaid: unpaid.score, senior: senior.score });
