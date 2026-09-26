@@ -12,7 +12,7 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => t.classList.remove('show'), 2600);
+  toast.t = setTimeout(() => t.classList.remove('show'), Math.max(2600, String(msg).length * 70)); // longer messages stay longer
 }
 
 async function safe(fn) {
@@ -418,6 +418,18 @@ function liveTable() {
     ${pager(livePage, pages)}`;
 }
 
+// Tells the user what pressing Refresh did.
+function refreshMessage(before) {
+  const r = LIVE.lastRefresh;
+  if (!r || !r.checked.length || LIVE.fetchedAt === before) return 'Everything was checked in the last few minutes. Try again shortly.';
+  const name = (id) => LIVE.sources[id]?.label || id;
+  const failed = r.checked.filter((id) => LIVE.status[id] && !LIVE.status[id].ok).map(name);
+  const parts = [r.added ? `Refreshed: ${r.added} new job${r.added === 1 ? '' : 's'}` : 'Refreshed: no new jobs since last time'];
+  if (r.empty.length) parts.push(`no results from ${r.empty.map(name).join(', ')}`);
+  if (failed.length) parts.push(`${failed.join(', ')} failed (see below)`);
+  return parts.join(' · ');
+}
+
 // « Prev  1 2 3 … 9  Next »: a window of pages around the current one.
 function pager(page, pages) {
   if (pages <= 1) return '';
@@ -488,7 +500,12 @@ PAGES.live = () => {
 };
 BIND.live = (v) => {
   const change = (patch) => { setLF(patch); livePage = 0; $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); };
-  $('#liveRefresh', v).onclick = () => safe(async () => { LIVE = { ...LIVE, refreshing: true }; render(); try { LIVE = await api.liveRefresh(true); } finally { await loadLive(); } });
+  $('#liveRefresh', v).onclick = () => safe(async () => {
+    const before = LIVE.fetchedAt;
+    LIVE = { ...LIVE, refreshing: true }; render();
+    try { LIVE = await api.liveRefresh(true); } finally { await loadLive(); }
+    toast(refreshMessage(before));
+  });
   $$('[data-link]', v).forEach((b) => { b.onclick = () => safe(() => api.openJob(LIVE.links[+b.dataset.link].url)); });
   $('#liveSources', v).onclick = () => { go('settings'); setTimeout(() => $('#sourcesCard')?.scrollIntoView({ behavior: 'smooth' }), 50); };
   $('#liveQ', v).oninput = (e) => change({ q: e.target.value });

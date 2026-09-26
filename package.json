@@ -1,6 +1,6 @@
 {
   "name": "applyease",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Fill job applications in seconds: profile autofill, CV upload, fit check, cover letters and a tracker.",
   "main": "src/main.js",
   "scripts": {

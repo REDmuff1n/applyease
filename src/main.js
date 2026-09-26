@@ -303,7 +303,7 @@ handle('live:boards', async (_e, boards) => {
   if (c.status?.boards) { delete c.status.boards.fetchedAt; delete c.status.boards.failedAt; }
   await refreshLive(true);
   notifyMain();
-  return { state: st, live: liveView() };
+  return { state: st, live: await liveView() };
 });
 
 // ---------- Live jobs dashboard ----------
@@ -326,12 +326,19 @@ function saveLive() {
 }
 
 // What the dashboard shows: every cached job with its fit score, without the long text.
-function liveView() {
+// Async: new jobs are scored in batches with pauses in between, so a big first
+// scoring run never freezes the window.
+async function liveView() {
   const st = store.get();
   const c = loadLive();
   const prefs = prefsOf(st);
+  for (let i = 0; i < c.jobs.length; i += 250) {
+    c.jobs.slice(i, i + 250).forEach(({ text, ...j }) => liveFit(j, text, st));
+    await new Promise((r) => setImmediate(r));
+  }
   return {
     fetchedAt: c.fetchedAt || '',
+    lastRefresh: c.lastRefresh || null,
     lastViewedAt: c.lastViewedAt || '',
     refreshing: Boolean(liveBusy),
     status: c.status || {},
@@ -388,7 +395,7 @@ function scheduleLive() {
 }
 
 handle('live:get', () => liveView());
-handle('live:refresh', async (_e, force) => { await refreshLive(Boolean(force)); return liveView(); });
+handle('live:refresh', async (_e, force) => { await refreshLive(Boolean(force)); return await liveView(); });
 handle('live:markSeen', () => { loadLive().lastViewedAt = new Date().toISOString(); saveLive(); return true; });
 handle('live:job', (_e, id) => loadLive().jobs.find((j) => j.id === id) || null);
 handle('live:reschedule', () => { scheduleLive(); return true; });
@@ -397,7 +404,7 @@ function resetSource(id) {
   const c = loadLive();
   if (c.status?.[id]) { delete c.status[id].fetchedAt; delete c.status[id].failedAt; saveLive(); }
 }
-handle('live:resetSource', async (_e, id) => { resetSource(String(id)); await refreshLive(true); return liveView(); });
+handle('live:resetSource', async (_e, id) => { resetSource(String(id)); await refreshLive(true); return await liveView(); });
 
 // ---------- Batch: score and tailor saved jobs ----------
 

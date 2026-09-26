@@ -115,12 +115,18 @@ const SOURCES = {
   },
   jooble: {
     label: 'Jooble', about: 'Aggregator covering 60+ countries, including Hungary and most of Europe. Free key from jooble.org/api/about.', key: 'feed:jooble', minHours: 0.5, keyUrl: 'https://jooble.org/api/about',
-    async fetch({ fetchFn, keywords, locations, keys }) {
+    async fetch({ fetchFn, keywords, locations, keys, state }) {
       if (!keys['feed:jooble']) throw new Error('add your Jooble key in Settings');
       const out = [];
-      const where = locations.find((l) => !/remote/i.test(l)) || '';
+      const url = `https://jooble.org/api/${encodeURIComponent(keys['feed:jooble'])}`;
+      const search = (k, location) => getJson(fetchFn, url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keywords: k, location, page: '1' }) });
+      // Jooble's API knows some countries only at country level ("Budapest" finds nothing,
+      // "Hungary" finds jobs), so a city that comes back empty is retried with the country.
+      const city = locations.find((l) => !/remote/i.test(l)) || '';
+      const country = state?.profile?.country || '';
       for (const k of (keywords.length ? keywords : ['']).slice(0, 3)) {
-        const d = await getJson(fetchFn, `https://jooble.org/api/${encodeURIComponent(keys['feed:jooble'])}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ keywords: k, location: where, page: '1' }) });
+        let d = await search(k, city);
+        if (!(d.jobs || []).length && country && country.toLowerCase() !== city.toLowerCase()) d = await search(k, country);
         out.push(...(d.jobs || []).map((j) => ({ id: 'jo-' + j.id, role: htmlToText(j.title), company: j.company, location: j.location, url: j.link, posted: iso(j.updated), text: [htmlToText(j.snippet), j.salary && 'Salary: ' + j.salary].filter(Boolean).join('\n'), tags: [j.type, j.source].filter(Boolean) })));
       }
       return out;
@@ -227,13 +233,17 @@ async function refresh(state, cache, { keys = {}, force = false, fetchFn = fetch
   // a fresh fetch replaces them, which drops the ones that closed.
   // (If some boards failed this time, keep what we had rather than dropping their jobs.)
   const boardUrls = due.some(([id]) => id === 'boards') && status.boards?.ok && !status.boards.warnings ? new Set(fresh.filter((j) => j.source === 'boards').map((j) => j.url)) : null;
-  const jobs = [...byKey.values()]
-    .filter((j) => (j.source === 'boards'
-      ? !boardUrls || boardUrls.has(j.url)
-      : now - (Date.parse(j.posted || j.firstSeen) || now) <= maxAge))
-    .sort((a, b) => String(b.posted || b.firstSeen).localeCompare(String(a.posted || a.firstSeen)))
-    .slice(0, 2000);
-  return { ...cache, jobs, status, fetchedAt: nowIso };
+  // Every open company-board job is kept; from the other sources the newest 2,500.
+  const newestFirst = (a, b) => String(b.posted || b.firstSeen).localeCompare(String(a.posted || a.firstSeen));
+  const all = [...byKey.values()];
+  const boardJobs = all.filter((j) => j.source === 'boards' && (!boardUrls || boardUrls.has(j.url)));
+  const feedJobs = all.filter((j) => j.source !== 'boards' && now - (Date.parse(j.posted || j.firstSeen) || now) <= maxAge)
+    .sort(newestFirst).slice(0, 2500);
+  const jobs = [...boardJobs, ...feedJobs].sort(newestFirst);
+  const added = jobs.filter((j) => j.firstSeen === nowIso).length;
+  // What this refresh did, for the message shown after pressing Refresh.
+  const lastRefresh = { at: nowIso, added, checked: due.map(([id]) => id), empty: due.map(([id]) => id).filter((id) => status[id]?.ok && !status[id].count) };
+  return { ...cache, jobs, status, fetchedAt: nowIso, lastRefresh };
 }
 
 // Quick searches on the big boards, opened in the ApplyEase window where the

@@ -96,6 +96,23 @@ const state = {
   assert.match(m.status.boards.warnings[0], /lever:beta — the site is rate-limiting/);
   assert(m.jobs.some((j) => j.id === 'old'), 'jobs from the failing board are kept');
 
+  // Jooble: a city with no results is retried with the profile's country.
+  const bodies = [];
+  const jo = await refresh({ profile: { country: 'Hungary' }, preferences: { targetRoles: 'analyst', locations: 'Budapest, Remote' }, feeds: { jooble: true } }, {}, { keys: { 'feed:jooble': 'jk' }, now: NOW,
+    fetchFn: async (url, init) => { const b = JSON.parse(init.body); bodies.push(b.location); return { ok: true, status: 200, json: async () => ({ totalCount: b.location === 'Hungary' ? 1 : 0, jobs: b.location === 'Hungary' ? [{ id: 7, title: 'Sr Analyst RTR', location: 'Hungary', link: 'https://jooble.org/desc/7', updated: '2026-09-25T00:00:00' }] : [] }) }; } });
+  assert.deepStrictEqual(bodies, ['Budapest', 'Hungary']);
+  assert.strictEqual(jo.jobs[0].role, 'Sr Analyst RTR');
+  assert.strictEqual(jo.lastRefresh.added, 1);
+  assert.deepStrictEqual(jo.lastRefresh.empty, []);
+
+  // Company-board jobs are never pushed out by the feed-job limit.
+  const many = Array.from({ length: 2600 }, (_, i) => ({ id: 'an-' + i, source: 'arbeitnow', role: 'Job ' + i, company: 'C' + i, url: 'https://a/' + i, posted: new Date(NOW - i * 60000).toISOString(), firstSeen: '2026-09-20T00:00:00Z' }));
+  const boardsOld = Array.from({ length: 300 }, (_, i) => ({ id: 'gh-' + i, source: 'boards', role: 'Board ' + i, company: 'B', url: 'https://b/' + i, posted: '2026-06-01T00:00:00Z', firstSeen: '2026-09-20T00:00:00Z' }));
+  const capped = await refresh({ preferences: {}, feeds: { arbeitnow: true, boards: true, maxAgeDays: 7 } }, { jobs: [...many, ...boardsOld], status: { arbeitnow: { fetchedAt: new Date(NOW).toISOString() }, boards: { fetchedAt: new Date(NOW).toISOString() } } }, { now: NOW + 1000, fetchFn });
+  assert.strictEqual(capped.jobs.filter((j) => j.source === 'boards').length, 300, 'all board jobs kept');
+  assert.strictEqual(capped.jobs.filter((j) => j.source === 'arbeitnow').length, 2500, 'feed jobs capped at 2,500');
+  assert.deepStrictEqual(capped.lastRefresh.checked, [], 'nothing was due');
+
   const links = boardSearchLinks(state.preferences, 1);
   assert.deepStrictEqual(links.map((l) => l.label), ['LinkedIn', 'Indeed', 'Glassdoor']);
   assert(links[0].url.includes('keywords=finance%20OR%20analyst') && links[0].url.includes('location=Budapest') && links[0].url.includes('f_TPR=r86400'), links[0].url);
