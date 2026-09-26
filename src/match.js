@@ -14,18 +14,58 @@ function remoteOk(where, okPlaces = []) {
   return OPEN.test(where) || okPlaces.some((p) => p && where.includes(p));
 }
 
-// prefs: { roles: 'a, b', places: 'Budapest, Remote', home: ['hungary', 'budapest'] }
-function matchJob(job, { roles, places, home = [] }) {
+// Title contains one of the user's role words?
+function roleMatch(job, roles) {
   const r = listOf(roles);
-  const locs = listOf(places);
   const title = String(job.role || '').toLowerCase();
+  return !r.length || r.some((k) => title.includes(k));
+}
+
+// Remote jobs often put the region in the title instead: "Account Executive - NA",
+// "Sales Lead, DACH", "… - San Francisco".
+const ELSEWHERE_TITLE = /\b(na|north america|americas|us|usa|u\.s\.|united states|canada|latam|apac|anz|india|japan|singapore|australia|san francisco|new york|london|dach|nordics?|benelux|uk|ireland|poland|germany|france|spain|italy|netherlands|portugal)\b/i;
+
+function remoteOpenTo(job, okPlaces = []) {
   const where = String(job.location || '').toLowerCase();
-  if (r.length && !r.some((k) => title.includes(k))) return false;
-  if (!locs.length || !where) return true;
+  if (!remoteOk(where, okPlaces)) return false;
+  const title = String(job.role || '').toLowerCase();
+  return !ELSEWHERE_TITLE.test(title) || okPlaces.some((p) => p && title.includes(p)) || /\b(europe|emea|eu|global|worldwide)\b/.test(title);
+}
+
+// Location is one of the user's places (or remote that's open to them)?
+// strict: a job with no location at all doesn't count.
+function placeMatch(job, places, home = [], { strict = false } = {}) {
+  const locs = listOf(places);
+  const where = String(job.location || '').toLowerCase();
+  if (!locs.length) return true;
+  if (!where) return !strict;
   const fixed = locs.filter((l) => l !== 'remote');
   if (fixed.some((l) => where.includes(l))) return true;
-  return locs.includes('remote') && remoteOk(where, [...fixed, ...home.map((h) => String(h).toLowerCase())]);
+  return locs.includes('remote') && remoteOpenTo(job, [...fixed, ...home.map((h) => String(h).toLowerCase())]);
 }
+
+// prefs: { roles: 'a, b', places: 'Budapest, Remote', home: ['hungary', 'budapest'] }
+function matchJob(job, { roles, places, home = [] }) {
+  return roleMatch(job, roles) && placeMatch(job, places, home);
+}
+
+// Employment types a listing mentions (from the feed's own data, the title and the
+// start of the description). Empty when the listing doesn't say.
+const TYPES = [
+  ['internship', /\bintern(ship)?s?\b|praktik|gyakornok|\btrainee|stagiaire|\bstage\b|placement year/],
+  ['student', /working student|werkstudent|student job|student worker|diákmunka|\bstudent\b.*\b(assistant|position|role|job)\b/],
+  ['parttime', /part[- ]?time|teilzeit|részmunkaidő|\bmini[- ]?job\b/],
+  ['fulltime', /full[- ]?time|vollzeit|teljes munkaidő|\bpermanent\b|\bfull_time\b/],
+  ['contract', /\bcontract(or)?\b|freelanc|fixed[- ]term|\btemporary\b|\btemp\b|befristet|maternity cover/]
+];
+function jobTypes(job, text = '') {
+  const head = `${job.role || ''} ${(job.tags || []).join(' ')} ${String(text).slice(0, 2500)}`.toLowerCase();
+  return TYPES.filter(([, re]) => re.test(head)).map(([t]) => t);
+}
+
+// Titles that aren't for students or new graduates.
+const SENIOR = /\b(senior|sr\.?|lead|principal|staff|head|director|manager|vp|vice president|chief|expert|architect|partner)\b/i;
+const isSenior = (job) => SENIOR.test(String(job.role || '')) && !/\b(intern|trainee|gyakornok|working student|junior|graduate)\b/i.test(String(job.role || ''));
 
 // The user's own prefs from app state.
 function prefsOf(state) {
@@ -33,4 +73,4 @@ function prefsOf(state) {
   return { roles: state.preferences?.targetRoles, places: state.preferences?.locations, home: [p.country, p.city].filter(Boolean) };
 }
 
-module.exports = { matchJob, remoteOk, prefsOf, listOf };
+module.exports = { matchJob, roleMatch, placeMatch, remoteOk, remoteOpenTo, jobTypes, isSenior, prefsOf, listOf };

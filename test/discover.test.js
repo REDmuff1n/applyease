@@ -31,6 +31,23 @@ assert(!ok('Data Analyst', 'Berlin · Remote'), 'remote inside another country')
 assert(!ok('Data Analyst', 'London'));
 assert(!ok('Software Engineer', 'Budapest'), 'role must match');
 assert(matchJob({ role: 'Engineer', location: 'Berlin' }, { roles: '', places: '' }), 'no prefs = everything');
+const { jobTypes, isSenior } = require('../src/match');
+assert.deepStrictEqual(jobTypes({ role: 'Finance Intern' }), ['internship']);
+assert.deepStrictEqual(jobTypes({ role: 'HR business partner gyakornok' }), ['internship']);
+assert.deepStrictEqual(jobTypes({ role: 'Werkstudent Vertrieb', tags: ['Part Time'] }), ['student', 'parttime']);
+assert.deepStrictEqual(jobTypes({ role: 'Analyst' }, 'This is a full-time, permanent role.'), ['fulltime']);
+assert.deepStrictEqual(jobTypes({ role: 'Customer Success Manager - 1 Year Maternity Cover' }), ['contract']);
+assert.deepStrictEqual(jobTypes({ role: 'Analyst' }, 'Great team.'), [], 'not stated');
+assert(isSenior({ role: 'Senior Backend Engineer' }) && isSenior({ role: 'Strategic Account Manager' }));
+assert(!isSenior({ role: 'Junior Financial Analyst' }) && !isSenior({ role: 'HR business partner gyakornok' }));
+const { placeMatch } = require('../src/match');
+assert(!ok('Finance Analyst III - NA', 'Remote'), 'region in the title');
+assert(!ok('Strategic Finance Analyst - San Francisco', 'Remote'));
+assert(!ok('Commercial Analyst, DACH', 'Remote'));
+assert(ok('Finance Analyst - EMEA', 'Remote'), 'EMEA in the title is fine');
+assert(ok('Analyst, Budapest team', 'Remote'));
+assert(placeMatch({ role: 'Analyst', location: '' }, 'Budapest', []), 'lenient: unknown location kept');
+assert(!placeMatch({ role: 'Analyst', location: '' }, 'Budapest', [], { strict: true }), 'strict: unknown location dropped');
 
 // ---- JSON-LD ----
 const page = `<html><head><title>x</title><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Other"},

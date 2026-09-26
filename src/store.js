@@ -31,7 +31,9 @@ const DEFAULTS = {
     locations: 'Remote',
     avoidKeywords: 'unpaid, commission only',
     paidOnly: true,
-    boards: ''
+    boards: '',
+    // Live jobs filters, remembered between sessions
+    liveFilters: { q: '', age: 0, source: 'all', sort: 'new', roles: true, place: 'mine', type: 'any', level: 'any', exclude: '', newOnly: false }
   },
   jobs: [],
   settings: {

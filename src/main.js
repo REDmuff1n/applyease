@@ -10,7 +10,7 @@ const { discover } = require('./discover');
 const { checkWriting } = require('./quality');
 const llm = require('./llm');
 const feeds = require('./feeds');
-const { matchJob, prefsOf } = require('./match');
+const { roleMatch, placeMatch, remoteOpenTo, jobTypes, isSenior, prefsOf } = require('./match');
 
 app.setName('ApplyEase');
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -316,7 +316,14 @@ function liveView() {
     links: feeds.boardSearchLinks(st.preferences, 1),
     jobs: c.jobs.map(({ text, ...j }) => {
       const f = liveFit(j, text, st);
-      return { ...j, fit: f.score, verdict: f.verdict, mine: matchJob(j, prefs) };
+      // On the dashboard a job needs a known location to count as "in my places".
+      const roleOk = roleMatch(j, prefs.roles);
+      const placeOk = placeMatch(j, prefs.places, prefs.home, { strict: true });
+      return {
+        ...j, fit: f.score, verdict: f.verdict, types: f.types, roleOk, placeOk,
+        remoteOpen: remoteOpenTo(j, prefs.home.map((h) => String(h).toLowerCase())),
+        senior: isSenior(j), mine: roleOk && placeOk
+      };
     })
   };
 }
@@ -325,14 +332,16 @@ function liveView() {
 // preferences change, so opening or refreshing the dashboard never freezes the app.
 const fitMemo = { key: '', scores: new Map() };
 function liveFit(j, text, st) {
-  const key = JSON.stringify([st.profile.skills, st.profile.languages, st.preferences]);
+  const pr = st.preferences;
+  const key = JSON.stringify([st.profile.skills, st.profile.languages, pr.targetRoles, pr.locations, pr.avoidKeywords, pr.paidOnly]);
   if (key !== fitMemo.key) { fitMemo.key = key; fitMemo.scores.clear(); }
   const id = `${j.id}|${j.url}`;
   let f = fitMemo.scores.get(id);
   if (!f) {
     // title, company and place count too: some feeds only send a short description
     f = checkFit(`Job title: ${j.role}\nCompany: ${j.company}\nLocation: ${j.location}\n${(j.tags || []).join(', ')}\n\n${text || ''}`, st);
-    fitMemo.scores.set(id, { score: f.score, verdict: f.verdict });
+    f = { score: f.score, verdict: f.verdict, types: jobTypes(j, text) };
+    fitMemo.scores.set(id, f);
   }
   return f;
 }

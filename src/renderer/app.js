@@ -370,8 +370,18 @@ BIND.find = (v) => {
 // ---------------- Live jobs ----------------
 
 let LIVE = null; // from api.live()
-const liveUI = { q: '', age: 0, source: 'all', mine: true, newOnly: false, sort: 'new', page: 0 };
+let livePage = 0;
 const PER_PAGE = 20;
+
+// Filters live in the saved preferences so they're remembered between sessions.
+const LF_DEFAULT = { q: '', age: 0, source: 'all', sort: 'new', roles: true, place: 'mine', type: 'any', level: 'any', exclude: '', newOnly: false };
+const LF = () => ({ ...LF_DEFAULT, ...(S.preferences.liveFilters || {}) });
+function setLF(patch) {
+  S.preferences.liveFilters = { ...LF(), ...patch };
+  saveSoon(() => ({ preferences: { liveFilters: S.preferences.liveFilters } }));
+}
+
+const TYPE_LABELS = { internship: 'Internship', student: 'Working student', parttime: 'Part-time', fulltime: 'Full-time', contract: 'Contract / temporary' };
 
 function ago(isoStr) {
   const t = Date.parse(isoStr);
@@ -388,16 +398,32 @@ const matchesMe = (j) => Boolean(j.mine);
 
 const isNew = (j) => Boolean(LIVE?.lastViewedAt) && j.firstSeen > LIVE.lastViewedAt;
 
+const listOfWords = (s) => String(s || '').split(/[,;\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+
+function placeOk(j, place) {
+  const where = String(j.location || '').toLowerCase();
+  if (place === 'any') return true;
+  if (place === 'mine') return j.placeOk;
+  if (place === 'remote') return j.remoteOpen;
+  return where.includes(place);
+}
+
 function liveRows() {
   if (!LIVE) return [];
-  const q = liveUI.q.trim().toLowerCase();
-  const since = liveUI.age ? Date.now() - liveUI.age * 864e5 : 0;
-  const rows = LIVE.jobs.filter((j) => (liveUI.source === 'all' || j.source === liveUI.source)
-    && (!liveUI.mine || matchesMe(j))
-    && (!liveUI.newOnly || isNew(j))
+  const f = LF();
+  const q = f.q.trim().toLowerCase();
+  const since = f.age ? Date.now() - f.age * 864e5 : 0;
+  const skip = listOfWords(f.exclude);
+  const rows = LIVE.jobs.filter((j) => (f.source === 'all' || j.source === f.source)
+    && (!f.roles || j.roleOk)
+    && placeOk(j, f.place)
+    && (f.type === 'any' || (j.types || []).includes(f.type))
+    && (f.level === 'any' || !j.senior)
+    && (!f.newOnly || isNew(j))
     && (!since || (Date.parse(j.posted || j.firstSeen) || Date.now()) >= since)
+    && (!skip.length || !skip.some((w) => String(j.role || '').toLowerCase().includes(w)))
     && (!q || `${j.role} ${j.company} ${j.location} ${(j.tags || []).join(' ')}`.toLowerCase().includes(q)));
-  if (liveUI.sort === 'fit') rows.sort((a, b) => b.fit - a.fit);
+  if (f.sort === 'fit') rows.sort((a, b) => b.fit - a.fit);
   return rows;
 }
 
@@ -414,22 +440,25 @@ async function loadLive() {
 
 function liveTable() {
   const rows = liveRows();
+  const total = LIVE.jobs.length;
   const srcLabel = (j) => (j.via ? `${j.via} (JSearch)` : LIVE.sources[j.source]?.label || j.source);
   if (!rows.length) {
-    return `<div class="empty">${LIVE.jobs.length ? 'No jobs match these filters. Try “All posted dates” or turn off “Only my roles & places”.' : 'No jobs yet. Press Refresh, or turn on more sources in Settings.'}</div>`;
+    return `<div class="empty">${total ? `None of the ${total.toLocaleString()} jobs match these filters. <button class="ghost" id="liveShowAll">Show all jobs</button>` : 'No jobs yet. Press Refresh, or turn on more sources in Settings.'}</div>`;
   }
   const pages = Math.ceil(rows.length / PER_PAGE);
-  liveUI.page = Math.min(liveUI.page, pages - 1);
-  const from = liveUI.page * PER_PAGE;
-  return `<p class="small muted" style="margin:6px 4px">Showing ${from + 1}–${Math.min(from + PER_PAGE, rows.length)} of ${rows.length} job${rows.length === 1 ? '' : 's'}.</p>
-    <table><thead><tr><th style="width:6%">Fit</th><th>Role</th><th style="width:16%">Company</th><th style="width:17%">Location</th><th style="width:13%">Source</th><th style="width:9%">Posted</th><th style="width:196px"></th></tr></thead><tbody>
+  livePage = Math.max(0, Math.min(livePage, pages - 1));
+  const from = livePage * PER_PAGE;
+  const filtered = rows.length < total;
+  return `<div class="row" style="margin:6px 4px"><p class="small muted" style="margin:0">Showing ${from + 1}–${Math.min(from + PER_PAGE, rows.length)} of ${rows.length.toLocaleString()} job${rows.length === 1 ? '' : 's'}${filtered ? ` matching your filters (${total.toLocaleString()} in total)` : ''} · page ${livePage + 1} of ${pages}</p>
+      <span class="spacer"></span>${filtered ? '<button class="ghost small" id="liveShowAll">Show all jobs</button>' : ''}</div>
+    <table><thead><tr><th style="width:6%">Fit</th><th>Role</th><th style="width:15%">Company</th><th style="width:16%">Location</th><th style="width:12%">Source</th><th style="width:9%">Posted</th><th style="width:196px"></th></tr></thead><tbody>
     ${rows.slice(from, from + PER_PAGE).map((j) => `<tr data-id="${esc(j.id)}">
       <td><span class="pill ${j.fit >= 70 ? 'good' : j.fit >= 45 ? 'warn' : 'bad'}" title="${esc(j.verdict)}">${j.fit}</span></td>
-      <td>${isNew(j) ? '<span class="pill new">New</span> ' : ''}${esc(j.role)}</td><td>${esc(j.company)}</td>
+      <td>${isNew(j) ? '<span class="pill new">New</span> ' : ''}${esc(j.role)}${(j.types || []).length ? `<div class="small muted">${j.types.map((t) => esc(TYPE_LABELS[t] || t)).join(' · ')}</div>` : ''}</td><td>${esc(j.company)}</td>
       <td class="small">${esc(j.location)}</td><td class="small muted">${esc(srcLabel(j))}</td><td class="small muted" title="${esc(j.posted)}">${esc(ago(j.posted || j.firstSeen))}</td>
       <td><div class="row" style="flex-wrap:nowrap;gap:4px"><button class="ghost l-check">Check</button><button class="ghost l-save">${S.jobs.some((x) => x.url === j.url) ? 'Saved ✓' : 'Save'}</button><button class="ghost l-open">Apply ↗</button></div></td>
     </tr>`).join('')}</tbody></table>
-    ${pager(liveUI.page, pages)}`;
+    ${pager(livePage, pages)}`;
 }
 
 // « Prev  1 2 3 … 9  Next »: a window of pages around the current one.
@@ -444,13 +473,28 @@ function pager(page, pages) {
   return `<div class="pager"><button class="ghost" data-page="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹ Prev</button>${parts.join('')}<button class="ghost" data-page="${page + 1}" ${page >= pages - 1 ? 'disabled' : ''}>Next ›</button></div>`;
 }
 
+// Place choices: your places, remote, Hungary, then the most common cities in the list.
+function placeOptions() {
+  const count = new Map();
+  for (const j of LIVE.jobs) {
+    const city = String(j.location || '').split(/[,·/;|(]/)[0].trim();
+    if (city && !/remote|anywhere|worldwide/i.test(city) && city.length < 30) count.set(city, (count.get(city) || 0) + 1);
+  }
+  const top = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([c]) => c).sort((a, b) => a.localeCompare(b));
+  return [['mine', `My places (${S.preferences.locations || 'anywhere'})`], ['any', 'Anywhere'], ['remote', 'Remote (open to Europe / worldwide)'], ['hungary', 'Hungary'], ...top.map((c) => [c.toLowerCase(), c])];
+}
+
 PAGES.live = () => {
   if (!LIVE) return '<div class="page"><div class="page-head"><h1>Live jobs</h1><p>Loading…</p></div></div>';
+  const f = LF();
   const enabled = Object.entries(LIVE.sources).filter(([, s]) => s.enabled);
   const problems = enabled.flatMap(([id, s]) => { const st = LIVE.status[id]; if (!st) return []; return st.ok ? (st.warnings || []).map((w) => `${s.label}: ${w}`) : [`${s.label}: ${st.error}`]; });
   const newCount = LIVE.jobs.filter((j) => isNew(j) && matchesMe(j)).length;
+  const places = placeOptions();
+  if (!places.some(([v]) => v === f.place)) places.push([f.place, f.place]);
+  const sel = (id, value, opts) => `<select id="${id}" style="width:auto">${opts.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(value) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   return `<div class="page" style="max-width:1200px">
-    <div class="page-head row"><div><h1>Live jobs</h1><p>The newest listings from ${enabled.length} source${enabled.length === 1 ? '' : 's'}, matched to what you're looking for. ${LIVE.fetchedAt ? 'Updated ' + ago(LIVE.fetchedAt) + '.' : ''}</p></div><span class="spacer"></span>
+    <div class="page-head row"><div><h1>Live jobs</h1><p>The newest listings from ${enabled.length} source${enabled.length === 1 ? '' : 's'}. ${LIVE.fetchedAt ? 'Updated ' + ago(LIVE.fetchedAt) + '.' : ''}</p></div><span class="spacer"></span>
       ${newCount ? `<span class="pill new">${newCount} new since your last visit</span>` : ''}
       <button id="liveRefresh" class="primary" ${LIVE.refreshing ? 'disabled' : ''}>${LIVE.refreshing ? 'Refreshing…' : 'Refresh'}</button></div>
     <div class="card row" style="gap:8px">
@@ -458,39 +502,53 @@ PAGES.live = () => {
       ${LIVE.links.map((l, i) => `<button class="ghost" data-link="${i}">${esc(l.label)} ↗</button>`).join('')}
       <span class="spacer"></span><button class="ghost" id="liveSources">Sources &amp; keys…</button>
     </div>
-    <div class="card" style="padding:10px 12px">
+    <div class="card filters" style="padding:10px 12px">
       <div class="row" style="gap:8px">
-        <input id="liveQ" placeholder="Filter by title, company, place…" value="${esc(liveUI.q)}" style="flex:1;min-width:200px">
-        <select id="liveAge" style="width:auto">${[[1, 'Last 24 hours'], [3, 'Last 3 days'], [7, 'Last 7 days'], [0, 'All posted dates']].map(([d, l]) => `<option value="${d}" ${liveUI.age === d ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <select id="liveSource" style="width:auto"><option value="all">All sources</option>${enabled.map(([id, s]) => `<option value="${id}" ${liveUI.source === id ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>
-        <select id="liveSort" style="width:auto"><option value="new" ${liveUI.sort === 'new' ? 'selected' : ''}>Newest first</option><option value="fit" ${liveUI.sort === 'fit' ? 'selected' : ''}>Best fit first</option></select>
+        <input id="liveQ" placeholder="Search title, company, place…" value="${esc(f.q)}" style="flex:1;min-width:200px">
+        ${sel('liveSort', f.sort, [['new', 'Newest first'], ['fit', 'Best fit first']])}
+      </div>
+      <div class="filter-grid">
+        <label>Job type ${sel('liveType', f.type, [['any', 'Any type'], ...Object.entries(TYPE_LABELS)])}</label>
+        <label>Level ${sel('liveLevel', f.level, [['any', 'Any level'], ['entry', 'Student & entry level']])}</label>
+        <label>Location ${sel('livePlace', f.place, places)}</label>
+        <label>Posted ${sel('liveAge', f.age, [[0, 'Any time'], [1, 'Last 24 hours'], [3, 'Last 3 days'], [7, 'Last 7 days'], [30, 'Last 30 days']])}</label>
+        <label>Source ${sel('liveSource', f.source, [['all', 'All sources'], ...enabled.map(([id, s]) => [id, s.label])])}</label>
+        <label>Hide titles with <input id="liveExclude" placeholder="e.g. engineer, German" value="${esc(f.exclude)}"></label>
       </div>
       <div class="row" style="gap:16px;margin-top:8px">
-        <label class="switch"><input type="checkbox" id="liveMine" ${liveUI.mine ? 'checked' : ''}> Only my roles &amp; places (${esc(S.preferences.targetRoles || 'any')} · ${esc(S.preferences.locations || 'anywhere')})</label>
-        <label class="switch"><input type="checkbox" id="liveNew" ${liveUI.newOnly ? 'checked' : ''}> New only</label>
+        <label class="switch"><input type="checkbox" id="liveRoles" ${f.roles ? 'checked' : ''}> Only my target roles (${esc(S.preferences.targetRoles || 'any')})</label>
+        <label class="switch"><input type="checkbox" id="liveNew" ${f.newOnly ? 'checked' : ''}> New only</label>
+        <span class="spacer"></span><button class="ghost" id="liveReset">Reset filters</button>
       </div>
+      <p class="small muted" style="margin:6px 0 0">Job type comes from what each listing says; listings that don't say are only shown under “Any type”.</p>
       ${problems.length ? `<div class="issues"><ul>${problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
     </div>
     <div class="card" style="padding:6px 10px" id="liveList">${liveTable()}</div>
   </div>`;
 };
 BIND.live = (v) => {
-  const redrawList = () => { liveUI.page = 0; $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); };
+  const change = (patch) => { setLF(patch); livePage = 0; $('#liveList', v).innerHTML = liveTable(); bindLiveList(v); };
   $('#liveRefresh', v).onclick = () => safe(async () => { LIVE = { ...LIVE, refreshing: true }; render(); try { LIVE = await api.liveRefresh(true); } finally { await loadLive(); } });
   $$('[data-link]', v).forEach((b) => { b.onclick = () => safe(() => api.openJob(LIVE.links[+b.dataset.link].url)); });
   $('#liveSources', v).onclick = () => { go('settings'); setTimeout(() => $('#sourcesCard')?.scrollIntoView({ behavior: 'smooth' }), 50); };
-  $('#liveQ', v).oninput = (e) => { liveUI.q = e.target.value; redrawList(); };
-  $('#liveAge', v).onchange = (e) => { liveUI.age = +e.target.value; redrawList(); };
-  $('#liveSource', v).onchange = (e) => { liveUI.source = e.target.value; redrawList(); };
-  $('#liveSort', v).onchange = (e) => { liveUI.sort = e.target.value; redrawList(); };
-  $('#liveMine', v).onchange = (e) => { liveUI.mine = e.target.checked; redrawList(); };
-  $('#liveNew', v).onchange = (e) => { liveUI.newOnly = e.target.checked; redrawList(); };
+  $('#liveQ', v).oninput = (e) => change({ q: e.target.value });
+  $('#liveExclude', v).oninput = (e) => change({ exclude: e.target.value });
+  $('#liveSort', v).onchange = (e) => change({ sort: e.target.value });
+  $('#liveType', v).onchange = (e) => change({ type: e.target.value });
+  $('#liveLevel', v).onchange = (e) => change({ level: e.target.value });
+  $('#livePlace', v).onchange = (e) => change({ place: e.target.value });
+  $('#liveAge', v).onchange = (e) => change({ age: +e.target.value });
+  $('#liveSource', v).onchange = (e) => change({ source: e.target.value });
+  $('#liveRoles', v).onchange = (e) => change({ roles: e.target.checked });
+  $('#liveNew', v).onchange = (e) => change({ newOnly: e.target.checked });
+  $('#liveReset', v).onclick = () => { setLF(LF_DEFAULT); livePage = 0; render(); };
   bindLiveList(v);
 };
 function bindLiveList(v) {
   const jobAt = (b) => LIVE.jobs.find((j) => j.id === b.closest('tr').dataset.id);
+  $('#liveShowAll', v)?.addEventListener('click', () => { setLF({ q: '', age: 0, source: 'all', roles: false, place: 'any', type: 'any', level: 'any', exclude: '', newOnly: false }); livePage = 0; render(); });
   $$('[data-page]', v).forEach((b) => { b.onclick = () => {
-    liveUI.page = +b.dataset.page;
+    livePage = +b.dataset.page;
     $('#liveList', v).innerHTML = liveTable(); bindLiveList(v);
     $('#liveList', v).scrollIntoView({ block: 'start' });
   }; });

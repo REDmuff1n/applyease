@@ -114,6 +114,26 @@ app.whenReady().then(async () => {
     await wait(100);
     assert.strictEqual(await rows(), 1, 'last 24 hours (and back to page 1)');
     assert.strictEqual(await ui('document.querySelectorAll(".pager").length'), 0, 'no pager for a single page');
+    const pick = (id, value) => ui(`(() => { const s = document.querySelector('#${id}'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); })()`);
+    const listText = () => ui('document.querySelector("#liveList").innerText');
+    await ui('document.querySelector("#liveReset").click()');
+    await pick('liveType', 'internship');
+    assert.strictEqual(await rows(), 1, 'job type: internship');
+    assert((await listText()).includes('Finance Intern'));
+    await pick('liveType', 'any');
+    await pick('livePlace', 'remote');
+    assert.strictEqual(await rows(), 1, 'location: remote open to Europe');
+    await pick('livePlace', 'any');
+    await ui(`(() => { const i = document.querySelector('#liveExclude'); i.value = 'analyst'; i.dispatchEvent(new Event('input')); })()`);
+    assert.strictEqual(await rows(), 1, 'hide titles with "analyst"');
+    await ui('document.querySelector("#liveShowAll").click()');
+    await wait(50);
+    assert((await listText()).includes('Showing 1–20 of 33 jobs · page 1 of 2'), 'Show all jobs: ' + (await listText()).slice(0, 80));
+    await ui(`(() => { const s = document.querySelector('#liveLevel'); s.value = 'entry'; s.dispatchEvent(new Event('change')); })()`);
+    assert((await listText()).includes('of 32 jobs matching your filters (33 in total)'), 'entry level hides the senior job');
+    await wait(1200); // filters are saved 0.4 s after the last change
+    assert.strictEqual(global.__applyease.store.get().preferences.liveFilters.level, 'entry', 'filters remembered');
+    await ui('document.querySelector("#liveReset").click()');
     await snap(main.webContents, 'main-live.png');
 
     const { openJobWindow, store } = global.__applyease;
